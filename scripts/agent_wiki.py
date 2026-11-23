@@ -305,12 +305,15 @@ def build_inventory(root: Path, git: dict[str, Any], tracked: set[str], max_entr
                 excluded_counts["symbolic link file"] += 1
                 continue
             try:
-                stat_result = path.stat(follow_symlinks=False)
+                stat_result = path.stat()
             except OSError:
                 excluded_counts["unreadable metadata"] += 1
                 continue
             if not path.is_file():
                 continue
+            if len(entries) >= max_entries:
+                truncated = True
+                break
             file_count += 1
             extension = Path(filename).suffix.lower()
             by_extension[extension or "[no extension]"] += 1
@@ -327,9 +330,6 @@ def build_inventory(root: Path, git: dict[str, Any], tracked: set[str], max_entr
             if is_candidate_file(rel) and len(candidate_files) < 100:
                 candidate_files.append(rel)
 
-            if len(entries) >= max_entries:
-                truncated = True
-                break
             entries.append({
                 "path": rel,
                 "size": stat_result.st_size,
@@ -425,10 +425,14 @@ def evidence_is_current(root: Path, manifest: dict[str, Any], record: dict[str, 
     sources = record.get("sources") or []
     if not sources:
         return False
+    eligible = {
+        item["path"] for item in manifest["inventory"]["entries"]
+        if item["text_candidate"] and item["excluded_reason"] is None
+    }
     for source in sources:
         rel = source.get("path")
         expected = source.get("sha256")
-        if not rel or not expected:
+        if not rel or not expected or rel not in eligible:
             return False
         try:
             path = safe_file(root, rel)
@@ -678,7 +682,8 @@ def read_command(args: argparse.Namespace) -> None:
         raise ValueError("Invalid line range.")
 
     if start_line is None:
-        raw = path.read_bytes()[: max_output + 1]
+        with path.open("rb") as handle:
+            raw = handle.read(max_output + 1)
         truncated = len(raw) > max_output or path.stat().st_size > max_output
         raw = raw[:max_output]
         text = raw.decode("utf-8", errors="replace")
@@ -769,6 +774,13 @@ def count_command(args: argparse.Namespace) -> None:
         entry = entries[index]
         size = entry["size"]
         if size > MAX_COUNT_FILE_BYTES:
+            skipped = job["skipped_large_files"]
+            if len(skipped) < 20:
+                skipped.append(entry["path"])
+            batch_files += 1
+            index += 1
+            continue
+        if size > max_bytes:
             skipped = job["skipped_large_files"]
             if len(skipped) < 20:
                 skipped.append(entry["path"])
