@@ -69,9 +69,11 @@ class AgentWikiTests(unittest.TestCase):
         self.assertNotIn("build.sh", result["inventory"]["candidate_files"])
         session_id = result["session_id"]
         _, _, manifest = agent_wiki.load_session(self.repo, session_id, str(self.state))
-        paths = {item["path"] for item in manifest["inventory"]["entries"]}
-        self.assertNotIn("build.sh", paths)
-        self.assertFalse(any(path.startswith("vendor/") for path in paths))
+        entries = {item["path"]: item for item in manifest["inventory"]["entries"]}
+        self.assertIn("build.sh", entries)
+        self.assertFalse(entries["build.sh"]["text_candidate"])
+        self.assertEqual(entries["build.sh"]["excluded_reason"], "build.sh ignored by policy")
+        self.assertFalse(any(path.startswith("vendor/") for path in entries))
         self.assertIn("build.sh ignored by policy", result["inventory"]["excluded_counts"])
 
     def test_path_traversal_is_rejected(self):
