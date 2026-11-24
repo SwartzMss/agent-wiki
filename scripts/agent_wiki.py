@@ -515,24 +515,32 @@ def evidence_records(path: Path) -> Iterable[dict[str, Any]]:
                 yield item
 
 
-def evidence_is_current(root: Path, manifest: dict[str, Any], record: dict[str, Any]) -> bool:
+def evidence_is_current(
+    root: Path, manifest: dict[str, Any], record: dict[str, Any],
+    hash_cache: dict[str, str | None] | None = None,
+    eligible: set[str] | None = None,
+) -> bool:
     sources = record.get("sources") or []
     if not sources:
         return False
-    eligible = {
-        item["path"] for item in manifest["inventory"]["entries"]
-        if item["text_candidate"] and item["excluded_reason"] is None
-    }
+    if eligible is None:
+        eligible = {
+            item["path"] for item in manifest["inventory"]["entries"]
+            if item["text_candidate"] and item["excluded_reason"] is None
+        }
+    if hash_cache is None:
+        hash_cache = {}
     for source in sources:
         rel = source.get("path")
         expected = source.get("sha256")
         if not rel or not expected or rel not in eligible:
             return False
-        try:
-            path = safe_file(root, rel)
-            if hash_file(path) != expected:
-                return False
-        except (OSError, ValueError):
+        if rel not in hash_cache:
+            try:
+                hash_cache[rel] = hash_file(safe_file(root, rel))
+            except (OSError, ValueError):
+                hash_cache[rel] = None
+        if hash_cache[rel] != expected:
             return False
     return True
 
@@ -550,10 +558,25 @@ def reuse_previous_evidence(root: Path, manifest: dict[str, Any], previous_dir: 
         return 0, 0, None
     reused = 0
     invalidated = 0
+    hash_cache: dict[str, str | None] = {}
+    eligible = {
+        item["path"] for item in manifest["inventory"]["entries"]
+        if item["text_candidate"] and item["excluded_reason"] is None
+    }
     for record in evidence_records(previous_evidence_path):
-        if record.get("classification") == "unverified_hypothesis":
+        classification = record.get("classification")
+        if classification == "unverified_hypothesis":
             continue
-        if evidence_is_current(root, manifest, record):
+        if classification not in CLASSIFICATIONS:
+            invalidated += 1  # Older schema claims need explicit reclassification.
+            continue
+        if evidence_is_current(root, manifest, record, hash_cache, eligible):
+            for field in ("claim", "scope", "notes"):
+                if isinstance(record.get(field), str):
+                    record[field] = redact_text(record[field])
+            for source in record.get("sources", []):
+                if isinstance(source.get("symbol"), str):
+                    source["symbol"] = redact_text(source["symbol"])
             record["reused_from_session_id"] = previous_session.get("session_id")
             append_jsonl(target, record)
             reused += 1
@@ -1129,43 +1152,43 @@ def context_pack_command(args: argparse.Namespace) -> None:
     root = Path(args.repo).expanduser().resolve(strict=True)
     session_dir, session, manifest = load_session(root, args.session, args.state_dir)
     max_bytes = min(max(args.max_bytes, 1), MAX_CONTEXT_PACK)
-    claims: list[dict[str, Any]] = []
-    invalidated = 0
-    omitted = 0
-    for record in evidence_records(session_dir / "evidence.jsonl"):
-        classification = record.get("classification")
-        if classification == "unverified_hypothesis":
-            omitted += 1
-            continue
-        if classification == "historical_fact" and not args.include_historical:
-            omitted += 1
-            continue
-        if not evidence_is_current(root, manifest, record):
-            invalidated += 1
-            continue
-        claims.append({
-            "id": record.get("id"),
-            "claim": record.get("claim"),
-            "classification": classification,
-            "scope": record.get("scope", ""),
-            "sources": record.get("sources", []),
-            "notes": record.get("notes", ""),
-        })
-
     result = {
         "session_id": session["session_id"],
         "claims": [],
-        "valid_claims": len(claims),
-        "invalidated_claims": invalidated,
-        "omitted_by_policy": omitted,
+        "valid_claims": 0,
+        "invalidated_claims": 0,
+        "omitted_by_policy": 0,
         "omitted_by_budget": 0,
     }
-    for claim in claims:
+    hash_cache: dict[str, str | None] = {}
+    eligible = {
+        item["path"] for item in manifest["inventory"]["entries"]
+        if item["text_candidate"] and item["excluded_reason"] is None
+    }
+    for record in evidence_records(session_dir / "evidence.jsonl"):
+        classification = record.get("classification")
+        if classification not in CLASSIFICATIONS or classification == "unverified_hypothesis":
+            result["omitted_by_policy"] += 1
+            continue
+        if classification == "historical_fact" and not args.include_historical:
+            result["omitted_by_policy"] += 1
+            continue
+        if not evidence_is_current(root, manifest, record, hash_cache, eligible):
+            result["invalidated_claims"] += 1
+            continue
+        result["valid_claims"] += 1
+        claim = {
+            "id": record.get("id"),
+            "claim": redact_text(str(record.get("claim", ""))),
+            "classification": classification,
+            "scope": redact_text(str(record.get("scope", ""))),
+            "sources": record.get("sources", []),
+            "notes": redact_text(str(record.get("notes", ""))),
+        }
         result["claims"].append(claim)
         if len(json_text(result).encode("utf-8")) > max_bytes:
             result["claims"].pop()
             result["omitted_by_budget"] += 1
-            break
     emit(result, max_bytes)
 
 
