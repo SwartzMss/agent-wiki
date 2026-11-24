@@ -103,6 +103,7 @@ python scripts/agent_wiki.py search --repo /path/to/repository --session SESSION
 - `schemas/`：Source Manifest、Evidence 和 Session 的 JSON Schema。
 - `scripts/agent_wiki.py`：有边界的仓库检查工具，以及外部 Session / Evidence 管理功能。
 - `tests/`：基于 Python 标准库的安全性、预算、计数和证据复用测试。
+- [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)：真实 OSS、QNX/Android/Linux 仓库的人工验收步骤与质量标准。
 
 ## 适用范围
 
