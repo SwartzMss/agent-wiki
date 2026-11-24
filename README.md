@@ -15,7 +15,7 @@
 - **证据外置：** Source Manifest、Evidence 记录和 Session 检查点保存在用户缓存目录，不写入目标仓库。
 - **支持断点恢复：** 中断后从上次记录的任务继续，不重复执行已完成的工作。
 - **增量复用：** 只有在重新验证源文件指纹后，才复用之前的证据。
-- **证据优先：** 明确区分已验证事实、既有约定、历史事实、潜在差异和未经验证的假设。
+- **证据优先：** 明确区分已验证事实、项目特有约束、历史事实、潜在差异和未经验证的假设。
 - **中文文档输出：** 生成的 `AGENTS.md` 和分析报告统一使用简体中文。
 
 ## 快速开始
@@ -29,17 +29,17 @@ python scripts/agent_wiki.py inventory --repo /path/to/repository
 python scripts/agent_wiki.py --help
 ~~~
 
-`inventory` 命令会创建一个扫描 Session，并输出 Session ID。后续定向搜索、文件读取、计数、证据记录、检查点保存和恢复操作都需要使用该 ID。
+`inventory` 命令会创建一个扫描 Session，并输出 Session ID。后续定向搜索、文件读取、按需计数、证据记录、检查点保存和恢复操作都需要使用该 ID。
 
 ~~~bash
 python scripts/agent_wiki.py search --repo /path/to/repository --session SESSION_ID --pattern "Service::Register"
 python scripts/agent_wiki.py read --repo /path/to/repository --session SESSION_ID --path src/service.cpp --start-line 40 --end-line 90
-python scripts/agent_wiki.py count --repo /path/to/repository --session SESSION_ID --pattern "nullptr"
+python scripts/agent_wiki.py count --repo /path/to/repository --session SESSION_ID --pattern "RegisterService"
 python scripts/agent_wiki.py resume --repo /path/to/repository --session SESSION_ID
 python scripts/agent_wiki.py context-pack --repo /path/to/repository --session SESSION_ID
 ~~~
 
-Skill 负责语义分析和扫描决策。Helper 不负责推断系统架构，也不直接生成文档；它只负责文件清单、受限搜索与读取、文本计数、证据元数据存储和 Session 状态管理。
+Skill 负责语义分析和扫描决策。Helper 不负责推断系统架构，也不直接生成文档；它只负责文件清单、受限搜索与读取、按需文本计数、证据元数据存储和 Session 状态管理。`count` 仅在核实具体接口、注册点或依赖关系时使用，不用于统计 `NULL/nullptr`、缩进、命名、Header Guard、版权头等编码风格。
 
 ## 语言与文档规范
 
@@ -51,7 +51,7 @@ Skill 负责语义分析和扫描决策。Helper 不负责推断系统架构，�
 | 扫描报告、Review 总结、审批说明 | **简体中文** |
 | 源码路径、函数名、类型名、宏、API、协议字段等 | 保留原文 |
 
-生成的 `AGENTS.md` 面向中文开发者和编码 Agent，应该使用中文描述项目结构、运行机制、接口契约、平台差异、代码约定和维护边界。不要因为 Skill 或 Prompt 是英文，就把最终文档也写成英文。
+生成的 `AGENTS.md` 面向中文开发者和编码 Agent，应该使用中文描述项目结构、运行机制、接口契约、平台差异、项目特有约束和维护边界。不要因为 Skill 或 Prompt 是英文，就把最终文档也写成英文。
 
 技术标识符必须保持准确。例如 `Service::Register`、`_QNX_`、`Android.bp`、`CMakeLists.txt` 等保持原样；必要时用中文解释其含义。
 
@@ -90,7 +90,9 @@ Helper 的默认单次操作限制如下。这些数值是硬上限，不是需�
 
 当前版本不会构建代码关系图，不执行 AST 分析，不调用 Subagent 或 IDE 专属 API，不执行仓库构建脚本，不启动服务，也不依赖外部数据库。
 
-生成的 `AGENTS.md` 用于说明仓库特有的导航信息和维护边界。它不是完整代码索引、系统设计规格、通用编码规范、构建手册或扫描数据库。
+生成的 `AGENTS.md` 用于说明仓库特有的导航信息、实际运行机制、接口契约和维护边界。它不是完整代码索引、系统设计规格、通用编码规范、构建手册或扫描数据库。
+
+**职责边界：** 本 Skill 不分析或生成通用编码风格规范。`NULL/nullptr`、缩进、命名、Header Guard、版权头覆盖率等不属于默认扫描范围；它们应由专门的编码规范、格式化工具或合规检查负责。
 
 ## 安全边界
 
