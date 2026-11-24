@@ -1113,8 +1113,10 @@ def context_pack_command(args: argparse.Namespace) -> None:
 def add_common(parser: argparse.ArgumentParser, session_required: bool = True) -> None:
     parser.add_argument("--repo", required=True, help="Exact target repository root.")
     parser.add_argument("--state-dir", help="Optional cache directory outside the target repository.")
-    if session_required:
-        parser.add_argument("--session", required=True, help="Session ID returned by inventory.")
+    parser.add_argument(
+        "--session", required=session_required,
+        help="Session ID returned by inventory; optional for resume."
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
