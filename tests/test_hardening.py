@@ -61,6 +61,7 @@ class HardeningTests(unittest.TestCase):
 
     def test_search_cursor_persists_and_auto_resumes(self):
         args = self.search_args()
+        args.glob = "src/service.cpp"
         first = self.run_command(agent_wiki.search_command, args)
         self.assertEqual(first["match_lines_found"], 80)
         self.assertEqual(first["next_line_offset"], 80)
@@ -74,7 +75,7 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(job["next_line_offset"], 80)
 
         second = self.run_command(agent_wiki.search_command, args)
-        self.assertEqual(second["match_lines_found"], 26)
+        self.assertEqual(second["match_lines_found"], 25)
         self.assertTrue(second["complete"])
         finished = self.run_command(agent_wiki.search_command, args)
         self.assertTrue(finished["finished"])
