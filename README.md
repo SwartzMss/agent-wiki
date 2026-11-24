@@ -20,7 +20,7 @@
 
 ## 快速开始
 
-阅读 [`SKILL.md`](SKILL.md) 并将本仓库安装为 Agent 所支持的 `agents-md` Skill。
+阅读 [`SKILL.md`](SKILL.md) 并将本仓库安装为 Agent 所支持的 `agents-md` Skill。**需要完整安装 `SKILL.md`、`references/` 和 `scripts/`，不能只复制 `SKILL.md`。** Agent 调用脚本时应以已安装 Skill 的绝对路径定位 `scripts/agent_wiki.py`，不能假设当前工作目录就是 Skill 目录。
 
 Helper 仅依赖 Python 3.9+ 标准库。它以只读方式检查目标仓库，并将 Session 数据保存在目标仓库之外。
 
