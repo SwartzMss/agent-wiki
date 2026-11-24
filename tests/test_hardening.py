@@ -190,6 +190,48 @@ class HardeningTests(unittest.TestCase):
             self.assertTrue(found[name]["text_candidate"], name)
         self.assertFalse(found["private.pem"]["text_candidate"])
 
+    def test_finished_search_detects_new_file_scope(self):
+        args = self.search_args()
+        args.max_matches = 80
+        self.run_command(agent_wiki.search_command, args)
+        done = self.run_command(agent_wiki.search_command, args)
+        self.assertTrue(done["complete"])
+        (self.repo / "src" / "new.cpp").write_text(
+            "RegisterService();\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "Search file scope changed"):
+            agent_wiki.search_command(args)
+
+    def test_prune_is_preview_only_and_preserves_active_sessions_by_default(self):
+        import os
+        import time
+        state_path = (self.state / agent_wiki.repository_key(self.repo) /
+                      "sessions" / self.session / "session.json")
+        old = time.time() - 40 * 86400
+        os.utime(state_path, (old, old))
+        opts = argparse.Namespace(
+            repo=str(self.repo), state_dir=str(self.state),
+            older_than_days=30, apply=False, include_active=False,
+        )
+        preview = self.run_command(agent_wiki.prune_command, opts)
+        self.assertEqual(preview["eligible_sessions"], 0)
+        self.assertEqual(preview["skipped_active_sessions"], 1)
+        self.assertTrue(state_path.exists())
+
+        done = argparse.Namespace(**self.common(), phase="done",
+                                  completed_task=None, next_task=None)
+        self.run_command(agent_wiki.checkpoint_command, done)
+        os.utime(state_path, (old, old))
+        preview = self.run_command(agent_wiki.prune_command, opts)
+        self.assertEqual(preview["eligible_sessions"], 1)
+        self.assertEqual(preview["deleted_sessions"], 0)
+        self.assertTrue(state_path.exists())
+
+        opts.apply = True
+        removed = self.run_command(agent_wiki.prune_command, opts)
+        self.assertEqual(removed["deleted_sessions"], 1)
+        self.assertFalse(state_path.exists())
+
     def test_hash_file_has_hard_limit(self):
         path = self.repo / "src" / "other.cpp"
         with self.assertRaisesRegex(ValueError, "too large"):
