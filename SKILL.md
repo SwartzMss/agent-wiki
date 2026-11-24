@@ -170,6 +170,10 @@ Default limits are defined in references/SCAN_POLICY.md. Do not raise them merel
 
 Counting is optional: run it only to confirm a concrete project contract, registration site, or dependency question, never to survey coding style or infer coding rules. Search is for locating evidence, not for generating a source dump. Read only the smallest range that answers the current question. A search result or count is incomplete unless the helper explicitly reports completion.
 
+**Resume search precisely:** when a search returns `complete=false`, pass both `next_offset` (file index) and `next_line_offset` (line index) as `--offset` and `--line-offset` for the next bounded batch. Do not discard the line cursor, or matches remaining in a large file may be skipped. When `skipped_files` is nonempty or the manifest is truncated, report partial coverage even after reaching the end.
+
+**Do not trust stale counts:** the helper validates file fingerprints before reusing counted results. If applicable files were added or removed, create a fresh inventory/session and rerun the question; do not report an old count as complete.
+
 For large repositories, split inspection into logical units such as runtime entry points, platform integration, public interfaces, IPC contracts, or test wiring. Finish one unit, persist its evidence, checkpoint, and then move to the next.
 
 ### Phase D — Externalize evidence
@@ -219,7 +223,7 @@ Before writing:
 - If a contract-related count was used, confirm it covers the declared applicable scope.
 - Distinguish configured, built, deployed, and runtime-loaded.
 - Check for contradictory evidence.
-- Check that secrets and excluded implementation were not copied.
+- Check that secrets and excluded implementation were not copied. The helper rejects common secret files and redacts common token formats, but cannot guarantee comprehensive secret detection; avoid inspecting sensitive paths and review output for unusual credential formats.
 - Check all generated-document exclusions in Section 3.2.
 - Verify that CLAUDE.md is exactly one line: @AGENTS.md.
 
