@@ -186,5 +186,72 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual([c["claim"] for c in claims], ["已确认服务注册点"])
 
 
+    def test_compact_oversized_inventory_summary_still_returns_session_id(self):
+        summary = {
+            "session_id": "test-session",
+            "repository": str(self.repo),
+            "git": {},
+            "inventory": {
+                "file_count": 50000,
+                "text_candidate_count": 30000,
+                "by_extension": {f".ext{i}": 200 for i in range(150)},
+                "top_level": ["directory-" + ("x" * 180) + str(i) for i in range(100)],
+                "candidate_files": ["src/" + ("y" * 180) + str(i) for i in range(100)],
+                "excluded_counts": {"binary": 50},
+                "truncated": True,
+            },
+            "reuse": {"reused": 0, "invalidated": 0},
+            "state_directory": str(self.state),
+        }
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            agent_wiki.emit_inventory_summary(summary)
+        payload = captured.getvalue()
+        self.assertLessEqual(len(payload.encode("utf-8")), agent_wiki.MAX_INVENTORY_OUTPUT + 1)
+        result = json.loads(payload)
+        self.assertEqual(result["session_id"], "test-session")
+        self.assertTrue(result["inventory"]["summary_truncated"])
+        self.assertTrue(result["inventory"]["truncated"])
+
+    def test_long_source_lines_do_not_expand_read_or_count_memory(self):
+        (self.repo / "src" / "huge.cpp").write_text(
+            "RegisterService();" * 10000, encoding="utf-8"
+        )
+        session = self.inventory()
+        read = argparse.Namespace(**self.common(session),
+            path="src/huge.cpp", start_line=1, end_line=1,
+            max_bytes=agent_wiki.MAX_READ_OUTPUT)
+        bounded = self.invoke(agent_wiki.read_command, read)
+        self.assertTrue(bounded["truncated"])
+        self.assertLessEqual(
+            len(bounded["content"].encode("utf-8")), agent_wiki.MAX_READ_OUTPUT
+        )
+        counted = self.invoke(agent_wiki.count_command, self.count_args(session))
+        self.assertFalse(counted["complete"])
+        self.assertIn("huge.cpp", "".join(counted["skipped_large_files"]))
+
+    def test_context_pack_skips_stale_and_does_not_reveal_secrets(self):
+        session = self.inventory()
+        evidence = argparse.Namespace(**self.common(session),
+            path="src/file0.cpp",
+            claim="token=very-secret-value",
+            notes="password=keep-hidden",
+            classification="verified_fact",
+            symbol=None, start_line=1, end_line=1, scope="")
+        self.invoke(agent_wiki.evidence_add_command, evidence)
+        args = argparse.Namespace(**self.common(session),
+            max_bytes=agent_wiki.MAX_CONTEXT_PACK,
+            include_historical=False)
+        pack = self.invoke(agent_wiki.context_pack_command, args)
+        serialized = json.dumps(pack)
+        self.assertNotIn("very-secret-value", serialized)
+        self.assertNotIn("keep-hidden", serialized)
+        (self.repo / "src" / "file0.cpp").write_text(
+            "different entry point\n", encoding="utf-8"
+        )
+        self.assertEqual(self.invoke(agent_wiki.context_pack_command, args)["claims"], [])
+
+
+
 if __name__ == "__main__":
     unittest.main()
