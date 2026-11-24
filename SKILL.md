@@ -168,11 +168,11 @@ python "<skill-root>/scripts/agent_wiki.py" count --repo <repo> --session <id> -
 
 Default limits are defined in references/SCAN_POLICY.md. Do not raise them merely to avoid planning. Narrow the path, symbol, module, or line range first.
 
-Counting is optional: run it only to confirm a concrete project contract, registration site, or dependency question, never to survey coding style or infer coding rules. Search is for locating evidence, not for generating a source dump. Read only the smallest range that answers the current question. A search result or count is incomplete unless the helper explicitly reports completion.
+Counting is optional: run it only to confirm a concrete project contract, registration site, or dependency question, never to survey coding style or infer coding rules. Regex search/count accept only a restricted subset; prefer literal patterns where possible and avoid backtracking-heavy expressions. Search is for locating evidence, not for generating a source dump. Read only the smallest range that answers the current question. A search result or count is incomplete unless the helper explicitly reports completion.
 
 **Resume search precisely:** the helper now persists Search Jobs in the external Session. Repeat the same query to automatically continue, or pass both `next_offset` and `next_line_offset` using `--offset` and `--line-offset`. Do not discard the line cursor, or matches remaining in a large file may be skipped. When `skipped_files` is nonempty or the manifest is truncated, report partial coverage even after reaching the end.
 
-**Do not trust stale counts:** the helper stores source size, mtime, and SHA-256, avoiding repeated hashing when file metadata remains stable. For finished but incomplete counts, `count --retry-skipped` retries omitted files without recounting successful sources. If applicable files were added or removed, create a fresh inventory/session and rerun the question; do not report an old count as complete.
+**Do not trust stale counts:** the helper stores source size, mtime, and SHA-256, and always re-hashes previously counted files before reusing results—even if size and mtime look unchanged. This costs additional disk I/O but prevents silent reuse of changed content. For finished but incomplete counts, `count --retry-skipped` retries omitted files without recounting successful sources. If applicable files were added or removed, create a fresh inventory/session and rerun the question; do not report an old count as complete.
 
 For large repositories, split inspection into logical units such as runtime entry points, platform integration, public interfaces, IPC contracts, or test wiring. Finish one unit, persist its evidence, checkpoint, and then move to the next.
 
@@ -184,7 +184,7 @@ For each material claim, store a compact evidence record outside the target repo
 python "<skill-root>/scripts/agent_wiki.py" evidence add --repo <repo> --session <id> --claim "<claim>" --classification verified_fact --path <relative-path> --symbol <symbol>
 ~~~
 
-Evidence records store claims, source paths, line/symbol locators, and source fingerprints. They do not store full source files or large snippets.
+Evidence records store claims, source paths, line/symbol locators, and source fingerprints. The helper verifies that supplied line numbers exist and the symbol literally appears within the specified range (or the bounded file when no range is provided). This is **locator validation, not semantic verification**. Evidence records do not store full source files or large snippets.
 
 Use references/EVIDENCE_POLICY.md to classify claims. A source path without a specific claim is not useful evidence. A claim without a verifiable source is not eligible for AGENTS.md.
 
@@ -233,7 +233,7 @@ After approval, write only the permitted output files. Verify the final contents
 
 ## 6. Context budgets and stop conditions
 
-Use references/SCAN_POLICY.md as the authoritative budget table.
+Use references/SCAN_POLICY.md as the authoritative budget table. The helper also counts cumulative stdout across a Session (512 KiB default). When it refuses further extraction, checkpoint or begin a new inventory/session; never bypass the restriction by switching to unbounded reads. This counts helper output bytes, not the model's full context or tokens.
 
 Stop and checkpoint when:
 
