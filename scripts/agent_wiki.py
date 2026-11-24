@@ -834,6 +834,11 @@ def search_command(args: argparse.Namespace) -> None:
     # Recheck file membership for an existing cursor. For large inventories
     # we do not silently claim completeness when the manifest is truncated.
     if existing["finished"] and not restart:
+        # A completed snapshot must not claim full coverage after additions or removals.
+        _, tracked = git_metadata(root)
+        current_paths, truncated_scope = current_scope_paths(root, tracked, normalized_glob)
+        if truncated_scope or current_paths != [item["path"] for item in entries]:
+            raise ValueError("Search file scope changed. Run inventory again.")
         emit({
             "job_id": job_key, "pattern": existing["pattern"],
             "glob": normalized_glob, "complete": existing["complete"],
@@ -978,6 +983,11 @@ def search_command(args: argparse.Namespace) -> None:
     existing["next_offset"] = index
     existing["next_line_offset"] = next_line_offset
     existing["finished"] = index >= len(entries)
+    if existing["finished"]:
+        _, tracked = git_metadata(root)
+        current_paths, truncated_scope = current_scope_paths(root, tracked, normalized_glob)
+        if truncated_scope or current_paths != [item["path"] for item in entries]:
+            raise ValueError("Search file scope changed. Run inventory again.")
     existing["complete"] = (
         existing["finished"]
         and not existing["skipped_count"]
