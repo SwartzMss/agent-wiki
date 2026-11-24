@@ -1,58 +1,58 @@
-# Repository Pattern Catalog
+# Repository Architecture and Contract Catalog
 
-This catalog is an analysis menu, not a list of rules to impose. Inspect only patterns relevant to the repository and retain only patterns that are stable, project-specific, and useful to a coding assistant.
+This catalog is a **project-knowledge discovery menu**, not a coding-standard generator. The goal is to capture stable facts and constraints that help a coding Agent locate code and avoid breaking real repository behavior.
 
-## Evidence threshold
+## Scope
 
-A repeated pattern may be described as an existing convention when it appears in at least 80% of applicable occurrences and in at least three independent source files, or when an explicit project-owned policy, ADR, or maintainer decision establishes it.
+Include only repository-specific knowledge that affects implementation, integration, runtime behavior, compatibility, or safe maintenance. Exclude coding style and format rules even when they appear frequently in source.
 
-The threshold applies to repeated conventions, not to every repository fact. One authoritative IDL can define a protocol field; one real entry point can establish where initialization begins; one regression test can establish a concrete pitfall.
-
-Counts must use a declared full scope and exclude generated, vendored, binary, and build-output files. Raw text counts are not semantic counts unless comments, strings, and generated text are handled appropriately.
-
-## Candidate dimensions
-
-| Dimension | Candidate evidence | Useful output |
+| Dimension | Evidence to inspect | Useful AGENTS.md output |
 |---|---|---|
-| Layout and ownership | Source roots, module owners, public/private headers | Module map and boundaries |
-| Runtime and lifecycle | Entry points, initialization order, teardown, callbacks | Verified runtime flow |
-| Module boundaries | Includes, exported targets, registration, call direction | Stable dependencies and coupling |
-| Naming and symbols | API prefixes, type/function names, registration strings | Existing project vocabulary |
-| Error handling | Error domains, return conventions, mappings | Error contract |
-| Logging | Logging APIs, severity mapping, subsystem use | Which logging interface belongs to which subsystem |
-| Configuration | Config sources, defaults, feature flags, platform branches | Authoritative configuration and override behavior |
-| Concurrency | Locks, atomics, event loops, callback threading, ownership | Verified thread/lifecycle constraints |
-| Memory and resources | Allocation/free pairing, RAII, handles, fixed buffers | Project-specific resource contracts |
-| Persistence and IPC | Shared memory, sockets, file paths, protocol framing | Data and process boundaries |
-| Generated files | Generator inputs, banners, generated outputs | Source of truth and files not to edit directly |
-| Testing | Fixtures, harnesses, mocks, target registration | Actual validation coverage |
-| Pitfalls | Guards, warnings, regression tests, reverts | Concrete failure modes and protected assumptions |
-| History and co-change | Repeated fixes/reverts, files changed together | Historical risks and integration touchpoints |
+| Project map | Targets, modules, source roots, exported interfaces | What each module owns and where to start |
+| Runtime lifecycle | Entry points, service registration, initialization and teardown | Actual startup flow and lifecycle constraints |
+| Module boundaries | Public exports, active links, RPC/IPC, consumers | How components interact and depend on one another |
+| Platform integration | QNX/Android/Linux branches, manifests, deploy rules | Configured vs built vs deployed vs loaded |
+| ABI and public API | Export rules, ABI-sensitive types, public headers | Compatibility boundaries and source-of-truth locations |
+| Protocol contracts | IDL, RPC schemas, numeric IDs, enums, error codes | Wire/data contracts and required consistency |
+| Shared resources | IPC handles, shared memory, buffers, device nodes, persistent paths | Ownership, lifetime, and external resource boundaries |
+| Concurrency and threading | Callback registration, mutex ownership, thread-affinity guards, tests | Proven thread and lifecycle invariants |
+| Configuration | Active config sources, feature switches, defaults with external impact | Where runtime behavior is configured |
+| Generated files | IDL/schema inputs, generators, generated outputs | Which source should be changed and which outputs are derived |
+| Dependency relationships | Declared deps, linked artifacts, runtime-loaded components, consumers | Actual impact scope for changes |
+| Tests and CI | Executed tests, regression coverage, integration targets | What is currently validated |
+| Concrete pitfalls | Regression tests, guards, warnings, reverts corroborated by current code | Failure modes and protected assumptions |
 
-## Classification
+## Evidence gates
 
-Choose one classification for each candidate:
+- **Verified fact:** a current source, active manifest, exported interface, or registered test establishes the claim.
+- **Verified project constraint:** a current API/ABI/protocol contract, runtime guard, active configuration, regression test, or explicit project-owned decision establishes a constraint, with its affected scope.
+- **Historical fact:** history helps explain an existing compatibility boundary; a commit message alone never proves current behavior.
+- **Potential discrepancy:** current sources disagree; cite both sides and mark it 需确认.
+- **Unverified hypothesis:** keep out of AGENTS.md.
 
-- verified_convention — meets the threshold or is explicitly documented.
-- tool_enforced — enforced by a CI/linter/build configuration; cite the enforcement point.
-- migration — old and new styles coexist with an evidenced direction; state scope and exceptions.
-- split — multiple styles coexist without a dominant pattern; omit as a convention.
-- isolated_example — one-off occurrence; do not promote to a convention.
+A single authoritative IDL or lifecycle entry point may be sufficient evidence. Do not require a prevalence percentage or multiple examples for a directly defined contract. Conversely, repeated text usage alone does not establish an invariant.
 
-## Historical evidence
+## Explicit exclusions
 
-Use Git history selectively:
+Do not analyze, count, or recommend:
 
-- A revert or repeated regression can reveal a concrete failure mode.
-- A regression test can corroborate behavior that must remain protected.
-- Co-change analysis can suggest related files to inspect when a feature changes.
-- A commit message alone does not establish a current invariant.
-- Historical facts belong in AGENTS.md only when they explain a current compatibility or maintenance boundary.
+- NULL vs nullptr preferences, indentation, whitespace, or brace formatting.
+- Naming case/style, generic file layout preferences, or include/header-guard style.
+- Copyright-header *coverage rates* or other coding-style census.
+- Logging macro usage rates when the API choice is merely stylistic.
+- Generic C/C++ coding standards, automated formatting rules, or best practices.
+- A migration direction from old to new style based only on code prevalence.
+
+License and NOTICE *facts* remain relevant for OSS provenance. A logging API, error representation, or naming string remains relevant only when it is a demonstrated public interface, protocol field, runtime registration key, or cross-component contract.
+
+## When to use the helper count command
+
+Counting is **not a default stage**. Use it only when an explicit project-specific question requires a complete scope, such as determining registered service endpoints or the consumers of a protocol symbol. Declare the file scope, verify completeness, then inspect representative authoritative definitions. A raw count is supporting evidence, not proof of semantics.
 
 ## Output discipline
 
-- State the observed pattern, scope, and representative paths.
-- Keep raw counts out unless they materially support a stable convention.
-- Never write “the project standard is” from a small sample.
-- Do not invent a migration direction or recommend a migration without evidence.
-- Do not add generic C/C++ advice.
+- Explain what the repository currently does, not how every C/C++ project should be written.
+- Reference exact source paths and symbols; do not copy large code blocks.
+- Label a genuine discrepancy 需确认 and do not turn it into an unsupported prohibition.
+- Keep project-specific maintenance constraints concise and attached to their evidence.
+- Prefer a small set of high-impact contracts and lifecycle facts over exhaustive code statistics.
