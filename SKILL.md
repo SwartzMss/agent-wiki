@@ -48,7 +48,7 @@ Include only useful, stable, repository-specific information:
 - Runtime entry points, lifecycle, and important relationships.
 - Platform and deployment facts, distinguishing configured, built, deployed, and runtime-loaded.
 - Cross-component contracts and public/internal interface boundaries.
-- Existing repository-specific code conventions and concrete pitfalls.
+- Verified repository-specific behavioral constraints, technical invariants, and concrete pitfalls.
 - Tests, tools, samples, and CI integration.
 - Maintenance boundaries that are supported by repository evidence.
 
@@ -58,7 +58,7 @@ Do not include:
 - A build-command or Soong/AOSP command chapter.
 - Git branch, commit, PR, release, or contribution workflow instructions.
 - A standalone open-questions or pending-items section.
-- Generic C/C++ coding standards or generic best-practice advice.
+- Coding-style or formatting rules (including NULL vs nullptr, naming, indentation, header guards, copyright-header coverage), generic C/C++ coding standards, or generic best-practice advice.
 - Secrets, generated output, caches, or unrelated vendor implementation.
 - build.sh as a build reference. Record its presence only if useful; never inspect it as an authoritative build source.
 
@@ -71,12 +71,12 @@ Every material statement must be traceable to current source evidence or an expl
 Classify observations as:
 
 - Verified fact.
-- Verified convention.
+- Verified project constraint.
 - Historical fact.
 - Potential discrepancy.
 - Unverified hypothesis.
 
-Only verified facts and verified conventions normally enter AGENTS.md. Include a discrepancy only in the relevant section, with the observed evidence and the label 需确认. Never promote a hypothesis or an isolated example into a project rule.
+Only verified facts and verified project-specific constraints normally enter AGENTS.md. Include a discrepancy only in the relevant section, with the observed evidence and the label 需确认. Never turn coding-style prevalence into an AGENTS.md rule, or promote a hypothesis or an isolated example into a project constraint.
 
 ### 3.4 Safe refresh
 
@@ -132,7 +132,7 @@ Classify the repository using evidence, not folder names alone:
 
 | Profile | Evidence | Inspection emphasis |
 |---|---|---|
-| Custom embedded component | Project-owned APP/CBB/FWK/HAL-style code, internal manifests, platform integration, or internal build framework | Runtime, platform/deployment, ABI/IPC, dependencies, existing conventions |
+| Custom embedded component | Project-owned APP/CBB/FWK/HAL-style code, internal manifests, platform integration, or internal build framework | Runtime, platform/deployment, ABI/IPC, dependencies, project-specific constraints |
 | OSS component | Identifiable upstream project, license/notice, upstream baseline, and local integration or patches | Upstream identity, local changes, exported API, packaging, consumers, license facts |
 | Other or mixed | Neither profile fits, or repository has multiple roles | Keep only dimensions relevant to the actual repository |
 
@@ -163,12 +163,12 @@ Use bounded helper operations:
 ~~~bash
 python scripts/agent_wiki.py search --repo <repo> --session <id> --pattern "<symbol-or-contract>"
 python scripts/agent_wiki.py read --repo <repo> --session <id> --path <relative-path> --start-line <n> --end-line <n>
-python scripts/agent_wiki.py count --repo <repo> --session <id> --pattern "<whole-token-or-pattern>"
+python scripts/agent_wiki.py count --repo <repo> --session <id> --pattern "<contract-symbol-or-registration-key>"
 ~~~
 
 Default limits are defined in references/SCAN_POLICY.md. Do not raise them merely to avoid planning. Narrow the path, symbol, module, or line range first.
 
-Search is for locating evidence, not for generating a source dump. Read only the smallest range that answers the current question. A search result or count is incomplete unless the helper explicitly reports completion.
+Counting is optional: run it only to confirm a concrete project contract, registration site, or dependency question, never to survey coding style or infer coding rules. Search is for locating evidence, not for generating a source dump. Read only the smallest range that answers the current question. A search result or count is incomplete unless the helper explicitly reports completion.
 
 For large repositories, split inspection into logical units such as runtime entry points, platform integration, public interfaces, IPC contracts, or test wiring. Finish one unit, persist its evidence, checkpoint, and then move to the next.
 
@@ -209,14 +209,14 @@ Use references/SECTION_TEMPLATES.md. Compose from the validated evidence set, no
 
 The document must be concise, navigable, repository-specific, and written in Simplified Chinese. Prefer a small project map and a few high-value constraints over exhaustive module lists or call graphs.
 
-Do not include a claim just because it was collected. Keep volatile values as links to authoritative files rather than copying them.
+Do not include coding-style observations or coding rules, even if a source explicitly documents them; those belong to the separate coding-standard workflow. Do not include a claim just because it was collected. Keep volatile values as links to authoritative files rather than copying them.
 
 ### Phase G — Validate and deliver
 
 Before writing:
 
 - Verify each cited path, symbol, target, and manifest entry.
-- Confirm counts cover the declared applicable scope.
+- If a contract-related count was used, confirm it covers the declared applicable scope.
 - Distinguish configured, built, deployed, and runtime-loaded.
 - Check for contradictory evidence.
 - Check that secrets and excluded implementation were not copied.
@@ -247,7 +247,7 @@ Deliver the report in Simplified Chinese. Include:
 
 - Repository path, profile, Create/Refresh mode, and commit when available.
 - Files created, updated, unchanged, or not written.
-- Key evidence paths for project map, runtime, platform/deployment, contracts, conventions, and tests/tools.
+- Key evidence paths for project map, runtime, platform/deployment, contracts, project-specific constraints, and tests/tools.
 - Whether inventory, searches, and counts completed or were truncated.
 - Reused and invalidated evidence, if any.
 - Excluded or inaccessible paths and dimensions not assessed.
