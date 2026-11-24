@@ -50,7 +50,7 @@ Do not run every deep check for every repository. Coding-style analysis (formatt
 
 ## Default context budgets
 
-These are hard output budgets for the helper, not targets to fill.
+These are hard output budgets for the helper, not targets to fill. In addition to per-call caps, the helper tracks cumulative stdout per Session (default 512 KiB); this is a byte proxy and **not** a measurement of full LLM context/token usage.
 
 | Budget | Default |
 |---|---:|
@@ -117,7 +117,7 @@ No scan artifacts are written into the target repository. No database or backgro
 - A new inventory creates a new session. `inventory.truncated` means some files were not indexed, and `inventory_complete=false` also covers directory/file scan errors. `summary_truncated` means the model-facing summary was compacted. Nested repositories and junction/reparse directories are excluded by default.
 - The helper finds the latest prior session for the same canonical repository path.
 - Prior evidence is copied only if every cited source still exists and its SHA-256 fingerprint matches.
-- Missing or changed source files invalidate the corresponding evidence record. Cached count jobs store content fingerprints for scanned files; a modified source invalidates the job, while added/removed in-scope files require a new inventory/session.
+- Missing or changed source files invalidate the corresponding evidence record. Count jobs re-hash previously scanned source files before accepting cached results, including when size and mtime are unchanged; added/removed in-scope files require a new inventory/session. This correctness check can increase I/O for very large jobs.
 - Unverified hypotheses are never reused into a new session.
 - Resume uses the saved phase and next task; it does not replay completed tasks by default.
 - If the repository changes during a session, revalidate the evidence before composing the document.
