@@ -147,7 +147,7 @@ class HardeningTests(unittest.TestCase):
         (nested / ".git").write_text(
             "gitdir: ../private/.git/modules/nested\n", encoding="utf-8"
         )
-        (nested / "secrets.cpp").write_text("const char *token = \\"secret\\";\n", encoding="utf-8")
+        (nested / "secrets.cpp").write_text('const char *token = "secret";\n', encoding="utf-8")
         (self.repo / ".gitmodules").write_text(
             '[submodule "nested"]\npath = nested\n', encoding="utf-8"
         )
