@@ -82,7 +82,14 @@ python scripts/agent_wiki.py search --repo /path/to/repository --session SESSION
 
 这里的游标值应使用上一次返回的 `next_offset` 与 `next_line_offset`。`--restart` 可重新搜索。已跳过文件与扫描进度会保存在 Search Job 中，断点前的文件发生变化时需要重新扫描。`complete=false` 也可能意味着有文件被跳过。
 
-`count` 保存 SHA-256、大小及修改时间：元数据未变时省去重复 Hash，发生变化时再验证内容。每批只核对文件名范围，不重新生成完整 Inventory。新增/删除适用范围内的文件仍须重新 `inventory`；跳过文件恢复后可用 `count --retry-skipped`，或通过 `--restart` 重算全部。缓存结果不会向模型输出大量文件指纹。
+`count` 保存 SHA-256、大小及修改时间。**复用统计结果时始终重新计算已统计源文件的 SHA-256**，即使大小和修改时间均未变化，也不会错误复用旧结果；这是优先保证正确性的取舍，超大仓库的 Count 重用可能仍需重新读取较多源码。新增/删除适用范围内的文件仍须重新 `inventory`；跳过文件恢复后可用 `count --retry-skipped`，或通过 `--restart` 重算全部。缓存结果不会向模型输出大量文件指纹。
+
+### 证据、正则与 Session 输出预算
+
+- `evidence add` 会确认指定的源码行号存在，并检查提供的 Symbol 在对应的行范围中实际出现。该检查只验证**字面位置**，不能证明 LLM 对代码行为的语义判断正确。
+- `--regex` 仅允许受限制的安全子集，拒绝分组量词、回溯引用及同一分支内多个量词等高风险表达式；正则参与匹配的单行最多 4,096 字符。Python 标准库正则没有硬执行超时，因此仍不能视为绝对的正则安全沙箱。
+- Session 按累计 Helper 输出字节数实施约 512 KB 的保护预算，超过限额时阻止继续输出大量源码。它**只统计 Helper 返回给模型的文本**，不是模型整个上下文窗口的 Token 计数，也不能完全防止 Context Compaction。
+- 从命令行调用 Helper 时使用跨进程文件锁，避免多个进程同时覆盖 Session 状态；Git 状态查询异常或超时时用未知值表示，不会误判工作区干净。
 
 ### Session 缓存清理
 
