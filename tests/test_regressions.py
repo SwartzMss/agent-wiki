@@ -253,5 +253,25 @@ class RegressionTests(unittest.TestCase):
 
 
 
+    def test_context_pack_reports_all_omissions_without_loading_all_claims(self):
+        session = self.inventory()
+        for i in range(12):
+            evidence = argparse.Namespace(**self.common(session),
+                path="src/file0.cpp",
+                claim="确认的服务契约 " + str(i) + " " + ("字" * 100),
+                notes="", classification="verified_constraint",
+                symbol="RegisterService", start_line=1, end_line=1, scope="")
+            self.invoke(agent_wiki.evidence_add_command, evidence)
+        args = argparse.Namespace(**self.common(session),
+            max_bytes=900, include_historical=False)
+        pack = self.invoke(agent_wiki.context_pack_command, args)
+        self.assertEqual(pack["valid_claims"], 12)
+        self.assertGreater(pack["omitted_by_budget"], 1)
+        self.assertEqual(
+            len(pack["claims"]) + pack["omitted_by_budget"], pack["valid_claims"]
+        )
+
+
+
 if __name__ == "__main__":
     unittest.main()
