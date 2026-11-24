@@ -9,7 +9,7 @@ Evidence records prevent unsupported claims and allow a session to resume withou
 | Classification | Meaning | AGENTS.md eligibility |
 |---|---|---|
 | verified_fact | Directly supported by current source or active configuration | Yes |
-| verified_convention | Repeated with the required threshold or explicitly documented | Yes |
+| verified_constraint | Verified project-specific runtime, ABI, protocol, ownership, or compatibility constraint | Yes |
 | historical_fact | Supported by history/changelog but may not describe current behavior | Only when it explains a current constraint |
 | potential_discrepancy | Current sources disagree or declaration/use appears inconsistent | Only in the relevant section, with 需确认 |
 | unverified_hypothesis | Plausible but not adequately supported | No |
@@ -45,11 +45,15 @@ A source fingerprint is computed from the file bytes. If the file changes or dis
 - A commit message is historical evidence, not proof of current behavior.
 - A manifest declaration is not proof of a built or deployed artifact.
 
-## Convention counts
+## Contract and constraint validation
 
-For repeated patterns, declare the applicable file scope, denominator, exclusions, and matching semantics. A candidate convention requires at least 80% of applicable occurrences across at least three independent source files, unless an explicit project-owned decision establishes it.
+A project-specific constraint must be supported by a current authoritative definition, active implementation, explicit project-owned decision, or test that protects the behavior. Describe its scope and consequences when relevant.
 
-The helper's count command is raw, line-based matching. It does not parse comments, strings, macros, or syntax. Use the result only as a search/count signal unless a more precise method is available.
+There is **no 80% / three-file prevalence test**: that heuristic is a coding-style survey and is not a gate for architecture facts or contracts. Do not infer a constraint from source-token frequency.
+
+The helper's `count` command may be used for specific consumer or registration coverage questions. Declare the scope, exclude generated/vendor/output files, and note whether the count is complete. Raw counts are not semantic analysis.
+
+Do not collect coding-style metrics (NULL/nullptr, naming, indentation, header guards, copyright-header coverage). Separate formatting and coding-policy documents own those decisions.
 
 ## Context packing
 
