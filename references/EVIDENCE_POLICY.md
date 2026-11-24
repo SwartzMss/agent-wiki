@@ -34,6 +34,8 @@ Prefer stable paths and symbols. Use line ranges only when they materially reduc
 
 A source fingerprint is computed from the file bytes. If the file changes or disappears, evidence referencing it is stale and must not be included in a context pack until revalidated.
 
+The helper also validates provided line ranges against the source file and checks that a provided symbol string appears at that location. This is only a literal locator check; the LLM still has to confirm the meaning of the claim from source evidence. A valid path, line, and hash do not establish that a statement is semantically correct.
+
 ## Evidence quality
 
 - A directory name is not proof of module ownership.
