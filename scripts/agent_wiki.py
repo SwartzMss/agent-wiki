@@ -41,6 +41,8 @@ TEXT_NAMES = {
     "dockerfile", "containerfile", "android.bp", "android.mk",
     "dependency.xml", "deploy.xml", "version", "version.dat",
     "changelog", "changes", "authors", "contributors",
+    ".gitmodules", "kconfig", "kbuild", "build", "workspace", "workspace.bazel",
+    "build.bazel", "module.bazel", "configure", "configure.ac",
 }
 BINARY_EXTENSIONS = {
     ".o", ".obj", ".a", ".lib", ".so", ".dylib", ".dll", ".exe", ".bin",
@@ -112,7 +114,8 @@ CANDIDATE_NAMES = {
     "readme", "readme.md", "cmakelists.txt", "android.bp", "android.mk",
     "dependency.xml", "deploy.xml", "version", "version.dat", "changelog",
     "changes", "license", "license.txt", "notice", ".gitmodules",
-    "meson.build", "makefile",
+    "meson.build", "makefile", "kconfig", "kbuild", "build", "build.bazel",
+    "workspace", "workspace.bazel", "module.bazel", "configure", "configure.ac",
 }
 TEXT_EXTENSIONS = {
     "", ".c", ".h", ".cc", ".hh", ".hpp", ".hxx", ".cpp", ".cxx", ".mm",
@@ -194,6 +197,8 @@ def emit_inventory_summary(summary: dict[str, Any]) -> None:
             "file_count": inventory["file_count"],
             "text_candidate_count": inventory["text_candidate_count"],
             "truncated": inventory["truncated"],
+            "inventory_complete": inventory["inventory_complete"],
+            "scan_error_count": len(inventory["scan_errors"]),
             "summary_truncated": True,
         },
         "reuse": summary["reuse"],
@@ -305,7 +310,9 @@ def is_generated(rel: str, name: str) -> bool:
     return False
 
 
-def excluded_directory(rel: str, name: str, tracked: set[str]) -> str | None:
+def excluded_directory(rel: str, name: str, tracked: set[str], path: Path | None = None) -> str | None:
+    if path is not None and (path / ".git").exists():
+        return "nested repository or submodule (read-only boundary)"
     lower = name.lower()
     if lower in EXCLUDED_DIRS:
         return "generated/build/cache directory"
@@ -374,7 +381,20 @@ def build_inventory(root: Path, git: dict[str, Any], tracked: set[str], max_entr
     truncated = False
     file_count = 0
     text_count = 0
-    for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
+    scan_errors: list[dict[str, str]] = []
+    excluded_paths: list[dict[str, str]] = []
+
+    def on_walk_error(error: OSError) -> None:
+        if len(scan_errors) < 100:
+            scan_errors.append({
+                "path": str(Path(error.filename).relative_to(root)) if error.filename
+                and Path(error.filename).is_relative_to(root) else str(error.filename or ""),
+                "error": type(error).__name__,
+            })
+
+    for current, dirs, files in os.walk(
+        root, topdown=True, followlinks=False, onerror=on_walk_error
+    ):
         current_path = Path(current)
         rel_dir = current_path.relative_to(root).as_posix()
         kept_dirs: list[str] = []
@@ -384,9 +404,11 @@ def build_inventory(root: Path, git: dict[str, Any], tracked: set[str], max_entr
             if dir_path.is_symlink():
                 excluded_counts["symbolic link directory"] += 1
                 continue
-            reason = excluded_directory(rel, dirname, tracked)
+            reason = excluded_directory(rel, dirname, tracked, dir_path)
             if reason:
                 excluded_counts[reason] += 1
+                if len(excluded_paths) < 100:
+                    excluded_paths.append({"path": rel, "reason": reason})
                 continue
             kept_dirs.append(dirname)
         dirs[:] = kept_dirs
@@ -399,8 +421,10 @@ def build_inventory(root: Path, git: dict[str, Any], tracked: set[str], max_entr
                 continue
             try:
                 stat_result = path.stat()
-            except OSError:
+            except OSError as exc:
                 excluded_counts["unreadable metadata"] += 1
+                if len(scan_errors) < 100:
+                    scan_errors.append({"path": rel, "error": type(exc).__name__})
                 continue
             if not path.is_file():
                 continue
@@ -442,14 +466,23 @@ def build_inventory(root: Path, git: dict[str, Any], tracked: set[str], max_entr
         "candidate_files": candidate_files,
         "excluded_counts": dict(sorted(excluded_counts.items())),
         "truncated": truncated,
+        "inventory_complete": not truncated and not scan_errors,
+        "scan_errors": scan_errors,
+        "excluded_paths": excluded_paths,
         "entries": entries,
     }
 
 
-def hash_file(path: Path) -> str:
+def hash_file(path: Path, max_bytes: int = MAX_COUNT_FILE_BYTES) -> str:
+    if path.stat().st_size > max_bytes:
+        raise ValueError("File is too large to fingerprint safely.")
     digest = hashlib.sha256()
+    processed = 0
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            processed += len(chunk)
+            if processed > max_bytes:
+                raise ValueError("File changed or exceeded the fingerprint budget.")
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -648,6 +681,9 @@ def inventory_command(args: argparse.Namespace) -> dict[str, Any]:
             "candidate_files": inventory["candidate_files"],
             "excluded_counts": inventory["excluded_counts"],
             "truncated": inventory["truncated"],
+            "inventory_complete": inventory["inventory_complete"],
+            "scan_errors": inventory["scan_errors"][:20],
+            "excluded_paths": inventory["excluded_paths"][:30],
         },
         "reuse": session["reuse"],
         "state_directory": str(session_dir),
@@ -1132,6 +1168,7 @@ def resume_command(args: argparse.Namespace) -> None:
             "file_count": manifest["inventory"]["file_count"],
             "text_candidate_count": manifest["inventory"]["text_candidate_count"],
             "truncated": manifest["inventory"]["truncated"],
+            "inventory_complete": manifest["inventory"].get("inventory_complete", False),
         },
         "evidence_records": evidence_count,
         "reuse": session["reuse"],
