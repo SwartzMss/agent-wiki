@@ -136,7 +136,8 @@
         "context_pack_bytes",
         "count_max_files",
         "count_max_bytes",
-        "count_max_file_bytes"
+        "count_max_file_bytes",
+        "session_helper_output_bytes"
       ],
       "properties": {
         "inventory_output_bytes": {
@@ -171,6 +172,10 @@
         },
         "count_max_file_bytes": {
           "type": "integer"
+        },
+        "session_helper_output_bytes": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     },
