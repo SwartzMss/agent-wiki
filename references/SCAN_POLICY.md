@@ -29,7 +29,7 @@ Select only relevant dimensions:
 - Public versus internal interfaces.
 - Cross-component ABI, IPC, RPC, protocol, registration, and persistent-state contracts.
 - Dependencies and consumers.
-- Existing conventions and concrete pitfalls.
+- Verified project-specific operational constraints and concrete failure modes.
 - Tests, tools, samples, and CI.
 - OSS upstream identity, license facts, and local integration.
 
@@ -39,14 +39,14 @@ Read authoritative files first. Use search to locate symbols and read only the s
 
 Deep inspection is justified only when a targeted question remains unanswered or a high-impact contract requires verification. Examples:
 
-- Full-scope counts to validate a candidate convention.
+- Targeted counts for service registration points, protocol identifiers, or dependency consumers when the exact contract question requires coverage.
 - Cross-repository reverse-dependency checks when sibling repositories are explicitly accessible.
 - Duplicate ABI/protocol/enum definitions across known consumers.
 - Git history for a repeated regression, revert, compatibility fix, or co-change.
 - Version/changelog consistency checks.
 - Security-sensitive configuration review, reporting paths and redacted risk only.
 
-Do not run every deep check for every repository.
+Do not run every deep check for every repository. Coding-style analysis (formatting, naming, NULL/nullptr, header guards, copyright-header coverage) is outside this Skill and must not be added to the scan plan.
 
 ## Default context budgets
 
@@ -82,7 +82,7 @@ For each logical task:
 5. Record the claim and source locator externally.
 6. Checkpoint the completed task and next task.
 
-If a search or count is incomplete, continue from the helper's saved cursor/job state or label the result incomplete. Do not infer a repository-wide convention from a partial batch.
+If a search or count is incomplete, continue from the helper's saved cursor/job state or label the result incomplete. Do not infer complete registration, consumer, or contract coverage from a partial batch.
 
 ## Ingest is not context loading
 
@@ -132,13 +132,13 @@ File metadata such as size and modification time is useful for inventory, but is
 - Files larger than the read budget must be inspected through targeted ranges or narrower searches.
 - Binary, generated, vendored, and excluded files are not normal source evidence.
 - build.sh is never read or treated as authoritative.
-- A raw text search does not establish semantic usage or a code convention.
+- A raw text search does not establish runtime behavior, API ownership, or contract semantics.
 
 ## Count policy
 
 A full-scope count must declare its applicable file scope, extensions, exclusions, and matching semantics.
 
-The helper's count operation is resumable and reports cumulative files, bytes, matches, skipped large files, and completion state. A count is complete only when every applicable file was scanned and no relevant file was skipped. The helper performs raw line-based matching; it does not parse C/C++ comments, string literals, macros, or syntax. Do not describe a raw count as a semantic count.
+The helper's count operation is resumable and reports cumulative files, bytes, matches, skipped large files, and completion state. A count is complete only when every applicable file was scanned and no relevant file was skipped. The helper performs raw line-based matching; it does not parse C/C++ comments, string literals, macros, or syntax. Do not describe a raw count as a semantic count. Never run counts solely to derive formatting, naming, NULL/nullptr, header-guard, or copyright-header coding rules.
 
 ## Stop conditions
 
