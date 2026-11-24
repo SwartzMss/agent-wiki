@@ -879,9 +879,16 @@ def search_command(args: argparse.Namespace) -> None:
                     if len(raw_line) > MAX_SOURCE_LINE_BYTES and not raw_line.endswith(b"\n"):
                         file_skipped = True
                         break
+                    line_number += 1
+                    if line_number <= next_line_offset:
+                        # Old lines were already scanned. Do not charge them
+                        # to the new batch; otherwise small budgets cannot resume.
+                        previous.append({
+                            "line": line_number,
+                            "text": redact_text(raw_line.decode("utf-8", "replace")[:MAX_LINE_CHARS]),
+                        })
+                        continue
                     if scanned_bytes + len(raw_line) > max_bytes:
-                        # A single line larger than the batch budget cannot
-                        # make progress; report the file as skipped.
                         if scanned_bytes == 0:
                             file_skipped = True
                         else:
@@ -889,13 +896,6 @@ def search_command(args: argparse.Namespace) -> None:
                             file_stopped = True
                         break
                     scanned_bytes += len(raw_line)
-                    line_number += 1
-                    if line_number <= next_line_offset:
-                        previous.append({
-                            "line": line_number,
-                            "text": redact_text(raw_line.decode("utf-8", "replace")[:MAX_LINE_CHARS]),
-                        })
-                        continue
                     if b"\0" in raw_line[:4096]:
                         file_skipped = True
                         break
@@ -940,7 +940,7 @@ def search_command(args: argparse.Namespace) -> None:
                 continue
             if file_stopped:
                 if stopped_for_budget:
-                    next_line_offset = line_number
+                    next_line_offset = line_number - 1
                 # End-of-file after a match cap is handled on next resume.
                 break
             index += 1
