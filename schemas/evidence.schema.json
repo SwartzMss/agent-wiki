@@ -11,7 +11,7 @@
     "claim": { "type": "string", "minLength": 1, "maxLength": 1200 },
     "classification": {
       "type": "string",
-      "enum": ["verified_fact", "verified_convention", "historical_fact", "potential_discrepancy", "unverified_hypothesis"]
+      "enum": ["verified_fact", "verified_constraint", "historical_fact", "potential_discrepancy", "unverified_hypothesis"]
     },
     "scope": { "type": "string", "maxLength": 500 },
     "sources": {
