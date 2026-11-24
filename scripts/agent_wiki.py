@@ -26,6 +26,7 @@ MAX_INVENTORY_OUTPUT = 24 * 1024
 MAX_READ_OUTPUT = 16 * 1024
 MAX_READ_SCAN = 64 * 1024 * 1024
 MAX_SOURCE_LINE_BYTES = 64 * 1024
+MAX_REGEX_LINE_CHARS = 4096
 MAX_SEARCH_OUTPUT = 32 * 1024
 MAX_SEARCH_MATCHES = 80
 MAX_SEARCH_FILES = 1_000
@@ -1038,6 +1039,9 @@ def search_command(args: argparse.Namespace) -> None:
                         file_skipped = True
                         break
                     line = raw_line.decode("utf-8", "replace")
+                    if args.regex and len(line) > MAX_REGEX_LINE_CHARS:
+                        file_skipped = True
+                        break
                     short = redact_text(line[:MAX_LINE_CHARS])
                     if matcher.search(line):
                         match_lines += 1
@@ -1345,9 +1349,10 @@ def count_command(args: argparse.Namespace) -> None:
                     if len(raw_line) > MAX_SOURCE_LINE_BYTES and not raw_line.endswith(b"\n"):
                         raise ValueError("File contains a source line over the count limit.")
                     fingerprint.update(raw_line)
-                    file_matches += sum(
-                        1 for _ in matcher.finditer(raw_line.decode("utf-8", errors="replace"))
-                    )
+                    decoded = raw_line.decode("utf-8", errors="replace")
+                    if args.regex and len(decoded) > MAX_REGEX_LINE_CHARS:
+                        raise ValueError("Regex source line exceeds the safe execution limit.")
+                    file_matches += sum(1 for _ in matcher.finditer(decoded))
         except (OSError, ValueError):
             job["skipped_large_files"].append(entry["path"])
             batch_files += 1
