@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import contextlib
 import fnmatch
 import hashlib
 import json
@@ -276,7 +277,8 @@ def git_metadata(root: Path) -> tuple[dict[str, Any], set[str]]:
         "is_repository": True,
         "head": head,
         "branch": branch or None,
-        "dirty": bool(status),
+        # Git failures/timeouts must not be interpreted as a clean worktree.
+        "dirty": bool(status) if status is not None else None,
     }, tracked
 
 
@@ -488,6 +490,42 @@ def build_inventory(root: Path, git: dict[str, Any], tracked: set[str], max_entr
         "excluded_paths": excluded_paths,
         "entries": entries,
     }
+
+
+def validate_evidence_locator(
+    path: Path, start_line: int | None, end_line: int | None, symbol: str | None
+) -> None:
+    """Check literal source coordinates only; semantic claim review remains the LLM's job."""
+    if start_line is None and not symbol:
+        return
+    if path.stat().st_size > MAX_COUNT_FILE_BYTES:
+        raise ValueError("Evidence source exceeds the verification byte limit.")
+    found_range = start_line is None
+    found_symbol = not symbol
+    inspected = 0
+    with path.open("rb") as source:
+        for number, raw_line in enumerate(iter(lambda: source.readline(MAX_SOURCE_LINE_BYTES + 1), b""), 1):
+            inspected += len(raw_line)
+            if inspected > MAX_COUNT_FILE_BYTES:
+                raise ValueError("Evidence source exceeds the verification byte limit.")
+            if len(raw_line) > MAX_SOURCE_LINE_BYTES and not raw_line.endswith(b"\n"):
+                raise ValueError("Evidence source has a line exceeding the verification limit.")
+            if start_line is not None and number >= start_line:
+                found_range = True
+            if start_line is not None and number < start_line:
+                continue
+            if end_line is not None and number > end_line:
+                break
+            if symbol and symbol in raw_line.decode("utf-8", errors="replace"):
+                found_symbol = True
+            if end_line is not None and number == end_line:
+                break
+    if not found_range:
+        raise ValueError("Evidence start-line is beyond the end of the source file.")
+    if end_line is not None and number < end_line:
+        raise ValueError("Evidence end-line is beyond the end of the source file.")
+    if not found_symbol:
+        raise ValueError("Evidence symbol was not found at the supplied source location.")
 
 
 def hash_file(path: Path, max_bytes: int = MAX_COUNT_FILE_BYTES) -> str:
@@ -1309,6 +1347,8 @@ def evidence_add_command(args: argparse.Namespace) -> None:
     claim = args.claim.strip()
     if not claim or len(claim) > 1200:
         raise ValueError("Claim must contain 1 to 1,200 characters.")
+    symbol = (args.symbol or "").strip()[:300] or None
+    validate_evidence_locator(path, args.start_line, args.end_line, symbol)
     record = {
         "id": uuid.uuid4().hex[:16],
         "claim": redact_text(claim),
@@ -1317,7 +1357,7 @@ def evidence_add_command(args: argparse.Namespace) -> None:
         "sources": [{
             "path": rel,
             "sha256": hash_file(path),
-            "symbol": redact_text((args.symbol or "").strip()[:300]) or None,
+            "symbol": redact_text(symbol) if symbol else None,
             "start_line": args.start_line,
             "end_line": args.end_line,
         }],
@@ -1581,9 +1621,53 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+@contextlib.contextmanager
+def session_lock(root: Path, state_dir: str | None):
+    """Serialize all CLI access to one repository's Session files, across processes."""
+    directory = session_parent(root, state_dir).parent
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name != "nt":
+        directory.chmod(0o700)
+    lock_path = directory / ".agent-wiki.lock"
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            with os.fdopen(fd, "r+b", closefd=False) as lock_file:
+                if os.fstat(fd).st_size < 1:
+                    lock_file.write(b"\0")
+                    lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    lock_file.seek(0)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    try:
+        root = Path(args.repo).expanduser().resolve(strict=True)
+        with session_lock(root, args.state_dir):
+            return dispatch_command(args)
+    except (OSError, ValueError, RuntimeError, KeyError, json.JSONDecodeError) as exc:
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        return 2
+
+
+def dispatch_command(args: argparse.Namespace) -> int:
     try:
         if args.command == "inventory":
             inventory_command(args)
