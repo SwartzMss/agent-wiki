@@ -11,6 +11,7 @@ import json
 import os
 import re
 import stat
+import shutil
 import subprocess
 import sys
 import uuid
@@ -1447,6 +1448,51 @@ def context_pack_command(args: argparse.Namespace) -> None:
     emit(result, max_bytes)
 
 
+def prune_command(args: argparse.Namespace) -> None:
+    """Opt-in state cleanup; dry-run by default and never touches source files."""
+    root = Path(args.repo).expanduser().resolve(strict=True)
+    parent = session_parent(root, args.state_dir)
+    older_days = args.older_than_days
+    if older_days < 1:
+        raise ValueError("--older-than-days must be at least 1.")
+    import time
+    threshold = time.time() - older_days * 86400
+    candidates: list[Path] = []
+    skipped_active = 0
+    if parent.exists():
+        for path in sorted(parent.iterdir()):
+            if not path.is_dir() or is_reparse_or_symlink(path):
+                continue
+            state_file = path / "session.json"
+            if not state_file.is_file() or is_reparse_or_symlink(state_file):
+                continue
+            try:
+                record = read_json(state_file)
+                if Path(record["repository"]["root"]).resolve() != root:
+                    continue
+                if state_file.stat().st_mtime >= threshold:
+                    continue
+                if record.get("status") == "active" and not args.include_active:
+                    skipped_active += 1
+                    continue
+            except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                continue
+            candidates.append(path)
+
+    if args.apply:
+        for path in candidates:
+            shutil.rmtree(path)
+    emit({
+        "dry_run": not args.apply,
+        "older_than_days": older_days,
+        "eligible_sessions": len(candidates),
+        "deleted_sessions": len(candidates) if args.apply else 0,
+        "skipped_active_sessions": skipped_active,
+        "examples": [p.name for p in candidates[:20]],
+        "state_directory": str(parent),
+    }, MAX_INVENTORY_OUTPUT)
+
+
 def add_common(parser: argparse.ArgumentParser, session_required: bool = True) -> None:
     parser.add_argument("--repo", required=True, help="Exact target repository root.")
     parser.add_argument("--state-dir", help="Optional cache directory outside the target repository.")
@@ -1526,6 +1572,12 @@ def build_parser() -> argparse.ArgumentParser:
     pack.add_argument("--max-bytes", type=int, default=MAX_CONTEXT_PACK)
     pack.add_argument("--include-historical", action="store_true")
 
+    prune = commands.add_parser("prune", help="Preview or remove stale Session state outside the repository.")
+    add_common(prune, session_required=False)
+    prune.add_argument("--older-than-days", type=int, default=30)
+    prune.add_argument("--apply", action="store_true", help="Delete matching old sessions; omitted means dry-run.")
+    prune.add_argument("--include-active", action="store_true", help="Also include stale active sessions.")
+
     return parser
 
 
@@ -1549,6 +1601,8 @@ def main(argv: list[str] | None = None) -> int:
             resume_command(args)
         elif args.command == "context-pack":
             context_pack_command(args)
+        elif args.command == "prune":
+            prune_command(args)
         else:
             parser.error("Unsupported command.")
         return 0
