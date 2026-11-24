@@ -74,15 +74,15 @@ Helper 的默认单次操作限制如下。这些数值是硬上限，不是需�
 
 ### 搜索断点与 Count 缓存
 
-搜索会返回 `complete`、`cursor.file_offset` 和 `cursor.line_offset`。如果 `complete=false` 且有剩余文件，应使用返回的两个游标值继续：
+搜索会返回 `complete`、`cursor.file_offset` 和 `cursor.line_offset`，同时把搜索游标持久化到 Session。使用相同搜索条件再次执行，会自动从保存位置继续；也可以手动传入两个游标：
 
 ~~~bash
 python scripts/agent_wiki.py search --repo /path/to/repository --session SESSION_ID --pattern "RegisterService" --offset FILE_OFFSET --line-offset LINE_OFFSET
 ~~~
 
-这里的 `FILE_OFFSET`、`LINE_OFFSET` 不是固定值，必须使用上一次返回的 `next_offset` 与 `next_line_offset`。这样即使单个文件内的匹配超过上限，也不会跳过该文件剩余行。
+这里的游标值应使用上一次返回的 `next_offset` 与 `next_line_offset`。`--restart` 可重新搜索。已跳过文件与扫描进度会保存在 Search Job 中，断点前的文件发生变化时需要重新扫描。`complete=false` 也可能意味着有文件被跳过。
 
-`count` 使用 SHA-256 校验已统计文件。源文件变化会使旧统计失效并重新计算；发现适用范围内新增/删除文件时，要求重新执行 `inventory` 建立新 Session。对于被截断的 Manifest 或跳过的文件，结果不得宣称完整。
+`count` 保存 SHA-256、大小及修改时间：元数据未变时省去重复 Hash，发生变化时再验证内容。每批只核对文件名范围，不重新生成完整 Inventory。新增/删除适用范围内的文件仍须重新 `inventory`；跳过文件恢复后可用 `count --retry-skipped`，或通过 `--restart` 重算全部。缓存结果不会向模型输出大量文件指纹。
 
 ### Windows / Linux 兼容
 
@@ -103,7 +103,7 @@ python scripts/agent_wiki.py search --repo /path/to/repository --session SESSION
 - `schemas/`：Source Manifest、Evidence 和 Session 的 JSON Schema。
 - `scripts/agent_wiki.py`：有边界的仓库检查工具，以及外部 Session / Evidence 管理功能。
 - `tests/`：基于 Python 标准库的安全性、预算、计数和证据复用测试。
-- [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)：真实 OSS、QNX/Android/Linux 仓库的人工验收步骤与质量标准。
+- [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)：真实 OSS、QNX/Android/Linux 仓库的人工验收步骤与质量标准。CI 会使用仅供测试的 `jsonschema` 验证三个实际数据结构，Helper 本身依旧只需要 Python 标准库。
 
 ## 适用范围
 
@@ -122,7 +122,8 @@ python scripts/agent_wiki.py search --repo /path/to/repository --session SESSION
 - Helper 不向目标仓库写入扫描数据或其他文件。
 - Session 和 Evidence 默认保存在用户缓存目录；也可以指定目标仓库之外的状态目录。
 - 刷新已有 `AGENTS.md` 时保留无法从源码重新推导的人工编写内容，并先展示完整差异，获得用户明确批准后再替换。
-- 默认排除 `.env`、密钥文件、常见凭据文件等潜在敏感来源，并对读取/搜索输出和 Evidence 字段进行基础脱敏。自动脱敏是尽力而为，**不等于能够识别所有私密信息**。
+- 默认排除 `.env`、密钥文件、常见凭据文件等潜在敏感来源，不递归扫描嵌套 Git 仓库、Submodule、Windows Junction / Reparse Point，并对读取/搜索输出和 Evidence 字段进行基础脱敏。自动脱敏是尽力而为，**不等于能够识别所有私密信息**。
+- Inventory 会报告读取失败的路径；有扫描错误或文件数截断时，`inventory_complete=false`。Linux 下 Session 目录和状态文件使用私有权限。
 - 不记录密钥、密码、Token、私钥等敏感值；人工检查输出中是否存在非标准格式的敏感配置。
 
 ## 当前状态
