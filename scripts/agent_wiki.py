@@ -594,6 +594,9 @@ def inventory_command(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def load_session(root: Path, session_id: str | None, state_dir: str | None) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    # Windows temporary paths can have different lexical representations
+    # (8.3 names, junctions, or letter casing). Compare canonical paths.
+    root = Path(root).expanduser().resolve(strict=True)
     parent = session_parent(root, state_dir)
     if session_id:
         if not re.fullmatch(r"[a-f0-9]{12}", session_id):
