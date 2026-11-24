@@ -18,7 +18,8 @@
     "manifest_file",
     "evidence_file",
     "count_jobs",
-    "reuse"
+    "reuse",
+    "usage"
   ],
   "properties": {
     "schema_version": {
@@ -213,6 +214,19 @@
       "type": "object",
       "additionalProperties": {
         "type": "object"
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "helper_output_bytes"
+      ],
+      "properties": {
+        "helper_output_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     }
   }
