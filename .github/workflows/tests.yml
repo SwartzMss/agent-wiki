@@ -20,6 +20,12 @@ jobs:
             os: ubuntu-22.04
           - python-version: "3.12"
             os: ubuntu-latest
+          - python-version: "3.9"
+            os: windows-latest
+          - python-version: "3.12"
+            os: windows-latest
+    env:
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
