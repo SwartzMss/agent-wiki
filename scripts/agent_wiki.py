@@ -90,6 +90,42 @@ def redact_text(text: str) -> str:
     return SECRET_TOKEN.sub("[REDACTED]", text)
 
 
+def validate_safe_regex(pattern: str) -> None:
+    """Conservative stdlib regex subset to avoid unbounded backtracking.
+
+    The standard library re engine has no execution timeout. Fail closed on
+    grouped/nested quantifiers, lookarounds, and repeated quantified atoms.
+    """
+    if len(pattern) > 256:
+        raise ValueError("Regex exceeds the 256-character safety limit.")
+    if re.search(r"(?<!\\)[(){}]", pattern):
+        raise ValueError("Regex groups/repetition braces are not supported for safe repository scans.")
+    if re.search(r"\\[1-9]", pattern):
+        raise ValueError("Regex backreferences are not supported.")
+    escaped = False
+    in_class = False
+    quantifiers = 0
+    for c in pattern:
+        if escaped:
+            escaped = False
+            continue
+        if c == "\\":
+            escaped = True
+            continue
+        if c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        elif not in_class and c == "|":
+            quantifiers = 0
+        elif not in_class and c in "*+?":
+            quantifiers += 1
+            if quantifiers > 1:
+                raise ValueError("Regex has multiple quantifiers in one branch; use a narrower expression.")
+    if in_class:
+        raise ValueError("Unclosed regex character class.")
+
+
 def normalize_relative_path(value: str) -> str:
     """Use platform-neutral slash-separated paths for manifest lookups."""
     normalized = value.replace("\\", "/")
@@ -829,8 +865,8 @@ def search_command(args: argparse.Namespace) -> None:
     entries = manifest_entries(manifest, normalized_glob)
     if len(args.pattern) > 256:
         raise ValueError("Search pattern exceeds the 256-character safety limit.")
-    if args.regex and re.search(r"\([^)]*[+*][^)]*\)\s*[+*{]", args.pattern):
-        raise ValueError("Nested quantified regular expressions are not supported.")
+    if args.regex:
+        validate_safe_regex(args.pattern)
     flags = 0 if args.case_sensitive else re.IGNORECASE
     expression = args.pattern if args.regex else re.escape(args.pattern)
     try:
@@ -1141,8 +1177,8 @@ def count_command(args: argparse.Namespace) -> None:
 
     if len(args.pattern) > 256:
         raise ValueError("Count pattern exceeds the 256-character safety limit.")
-    if args.regex and re.search(r"\([^)]*[+*][^)]*\)\s*[+*{]", args.pattern):
-        raise ValueError("Nested quantified regular expressions are not supported.")
+    if args.regex:
+        validate_safe_regex(args.pattern)
     flags = 0 if args.case_sensitive else re.IGNORECASE
     expression = args.pattern if args.regex else re.escape(args.pattern)
     try:
@@ -1171,8 +1207,8 @@ def count_command(args: argparse.Namespace) -> None:
                     if not isinstance(stamp, dict):
                         invalidated_cache = True
                         break
-                    if st.st_size == stamp["size"] and st.st_mtime_ns == stamp["mtime_ns"]:
-                        continue
+                    # A same-size, same-mtime edit is still possible. Always
+                    # verify the stored digest before reusing a Count result.
                     if hash_file(path) != stamp["sha256"]:
                         invalidated_cache = True
                         break
