@@ -69,20 +69,21 @@ Prioritize only contracts that cross a module, process, repository, or deploymen
 
 State the workspace boundary. Never claim an exhaustive reverse-dependency list outside the scanned workspace.
 
-## 5. Existing code patterns
+## 5. Project-specific invariants and failure modes
 
-Use references/PATTERN_CATALOG.md. Candidate checks may include:
+Use references/PATTERN_CATALOG.md only for concrete behavior, not coding style. Investigate when relevant:
 
-- NULL versus nullptr.
-- Logging API families and severity mapping.
-- Header guards and include conventions.
-- Copyright-header coverage.
-- Error handling and resource lifecycle.
-- Threading, locks, callbacks, and ownership.
-- Configuration defaults and feature flags.
-- Generated-file banners and source-of-truth relationships.
+- Initialization/teardown ordering that other modules depend on.
+- Thread affinity, callback execution context, and synchronization contracts.
+- Ownership and lifetime rules for handles, buffers, shared memory, and externally visible resources.
+- IPC/RPC message, enum, error-code, registration, or protocol compatibility requirements.
+- Platform-specific behavior that affects QNX/Android/Linux integration.
+- Generated outputs and their authoritative schema/IDL or generator inputs.
+- Specific historical regressions confirmed by a guard, regression test, or current implementation.
 
-Counts are optional. Run full-scope counts only when a candidate convention would materially improve AGENTS.md.
+Do not scan for NULL/nullptr preferences, logging-style prevalence, naming, indentation, header-guard style, copyright-header coverage, or generic coding standards. Logging or error APIs belong here only when they are an actual cross-component/runtime contract, not when they are merely stylistic.
+
+Counts are optional and only answer an explicit contract question, such as how many service registration sites or in-scope consumers exist. Raw text counts cannot establish behavior by themselves.
 
 ## 6. Dependencies and versions
 
