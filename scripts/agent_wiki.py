@@ -22,6 +22,7 @@ MAX_INVENTORY_ENTRIES = 50_000
 MAX_INVENTORY_OUTPUT = 24 * 1024
 MAX_READ_OUTPUT = 16 * 1024
 MAX_READ_SCAN = 64 * 1024 * 1024
+MAX_SOURCE_LINE_BYTES = 64 * 1024
 MAX_SEARCH_OUTPUT = 32 * 1024
 MAX_SEARCH_MATCHES = 80
 MAX_SEARCH_FILES = 1_000
@@ -159,6 +160,45 @@ def emit(value: Any, limit: int | None = None) -> None:
     if limit is not None and len(rendered.encode("utf-8")) > limit:
         raise RuntimeError("Output exceeded the declared response budget.")
     print(rendered)
+
+
+def emit_inventory_summary(summary: dict[str, Any]) -> None:
+    """Always return the session ID, even for very wide repository inventories."""
+    inventory = summary["inventory"]
+    inventory["summary_truncated"] = False
+    for _ in range(100):
+        if len(json_text(summary).encode("utf-8")) <= MAX_INVENTORY_OUTPUT:
+            emit(summary, MAX_INVENTORY_OUTPUT)
+            return
+        inventory["summary_truncated"] = True
+        candidates = inventory["candidate_files"]
+        top_level = inventory["top_level"]
+        if len(candidates) > 1:
+            del candidates[max(1, len(candidates) // 2):]
+        elif len(top_level) > 1:
+            del top_level[max(1, len(top_level) // 2):]
+        elif len(inventory["by_extension"]) > 1:
+            keys = list(inventory["by_extension"])
+            for key in keys[len(keys) // 2:]:
+                del inventory["by_extension"][key]
+        elif len(inventory["excluded_counts"]) > 1:
+            keys = list(inventory["excluded_counts"])
+            for key in keys[len(keys) // 2:]:
+                del inventory["excluded_counts"][key]
+        else:
+            break
+    emit({
+        "session_id": summary["session_id"],
+        "repository": summary["repository"],
+        "inventory": {
+            "file_count": inventory["file_count"],
+            "text_candidate_count": inventory["text_candidate_count"],
+            "truncated": inventory["truncated"],
+            "summary_truncated": True,
+        },
+        "reuse": summary["reuse"],
+        "state_directory": summary["state_directory"],
+    }, MAX_INVENTORY_OUTPUT)
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -589,7 +629,7 @@ def inventory_command(args: argparse.Namespace) -> dict[str, Any]:
         "reuse": session["reuse"],
         "state_directory": str(session_dir),
     }
-    emit(summary, MAX_INVENTORY_OUTPUT)
+    emit_inventory_summary(summary)
     return session
 
 
@@ -731,8 +771,8 @@ def search_command(args: argparse.Namespace) -> None:
         and not stopped_for_match_limit
     )
     result = {
-        "pattern": args.pattern,
-        "glob": args.glob,
+        "pattern": redact_text(args.pattern),
+        "glob": normalize_relative_path(args.glob) if args.glob else None,
         "files_scanned": scanned_files,
         "bytes_scanned": scanned_bytes,
         "match_lines_found": match_lines,
@@ -781,10 +821,18 @@ def read_command(args: argparse.Namespace) -> None:
         truncated = False
         first_line = start_line
         with path.open("rb") as handle:
-            for number, raw_line in enumerate(handle, 1):
+            number = 0
+            while True:
+                raw_line = handle.readline(MAX_SOURCE_LINE_BYTES + 1)
+                if not raw_line:
+                    break
+                number += 1
                 scanned_bytes += len(raw_line)
                 if scanned_bytes > MAX_READ_SCAN:
                     truncated = True
+                    break
+                if len(raw_line) > MAX_SOURCE_LINE_BYTES and not raw_line.endswith(b"\n"):
+                    truncated = True  # Never allocate an unbounded source line.
                     break
                 if number > end_line:
                     break
@@ -827,7 +875,10 @@ def count_command(args: argparse.Namespace) -> None:
     git, tracked = git_metadata(root)
     current_inventory = build_inventory(root, git, tracked, MAX_INVENTORY_ENTRIES)
     current_entries = manifest_entries({"inventory": current_inventory}, normalized_glob)
-    if [item["path"] for item in entries] != [item["path"] for item in current_entries]:
+    if (
+        [item["path"] for item in entries] != [item["path"] for item in current_entries]
+        or (current_inventory["truncated"] and not manifest["inventory"]["truncated"])
+    ):
         raise ValueError(
             "Repository file scope changed since inventory. Run inventory again "
             "before counting; prior cached results must not be reused."
@@ -866,7 +917,7 @@ def count_command(args: argparse.Namespace) -> None:
 
     if args.restart or invalidated_cache or job_key not in session["count_jobs"]:
         session["count_jobs"][job_key] = {
-            "pattern": args.pattern,
+            "pattern": redact_text(args.pattern),
             "glob": normalized_glob,
             "regex": args.regex,
             "case_sensitive": args.case_sensitive,
@@ -914,7 +965,12 @@ def count_command(args: argparse.Namespace) -> None:
             file_matches = 0
             fingerprint = hashlib.sha256()
             with path.open("rb") as handle:
-                for raw_line in handle:
+                while True:
+                    raw_line = handle.readline(MAX_SOURCE_LINE_BYTES + 1)
+                    if not raw_line:
+                        break
+                    if len(raw_line) > MAX_SOURCE_LINE_BYTES and not raw_line.endswith(b"\n"):
+                        raise ValueError("File contains a source line over the count limit.")
                     fingerprint.update(raw_line)
                     file_matches += sum(
                         1 for _ in matcher.finditer(raw_line.decode("utf-8", errors="replace"))
