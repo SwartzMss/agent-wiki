@@ -973,7 +973,7 @@ def search_command(args: argparse.Namespace) -> None:
         "finished": existing["finished"], "next_offset": index,
         "next_line_offset": next_line_offset,
         "cursor": {"file_offset": index, "line_offset": next_line_offset},
-        "remaining_files": max(0, len(work_entries) - index),
+        "remaining_files": max(0, len(entries) - index),
         "skipped_files": skipped[:20], "skipped_count": existing["skipped_count"],
         "stopped_on_budget": stopped_for_budget,
         "resumed": index != 0 or line_offset != 0,
@@ -1259,7 +1259,7 @@ def count_command(args: argparse.Namespace) -> None:
         "finished": job["finished"],
         "complete": job["complete"],
         "next_offset": job["next_offset"],
-        "remaining_files": max(0, len(entries) - index),
+        "remaining_files": max(0, len(work_entries) - index),
         "incomplete_reason": job["incomplete_reason"],
     })
 
