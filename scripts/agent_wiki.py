@@ -34,6 +34,7 @@ MAX_SEARCH_FILE_BYTES = 4 * 1024 * 1024
 MAX_SNIPPETS = 12
 MAX_LINE_CHARS = 1_000
 MAX_CONTEXT_PACK = 96 * 1024
+MAX_SESSION_OUTPUT_BYTES = 512 * 1024
 MAX_COUNT_FILES = 1_000
 MAX_COUNT_BYTES = 256 * 1024 * 1024
 MAX_COUNT_FILE_BYTES = 64 * 1024 * 1024
@@ -183,6 +184,7 @@ DEFAULT_BUDGETS = {
     "search_max_bytes": MAX_SEARCH_BYTES,
     "snippets_per_task": MAX_SNIPPETS,
     "context_pack_bytes": MAX_CONTEXT_PACK,
+    "session_helper_output_bytes": MAX_SESSION_OUTPUT_BYTES,
     "count_max_files": MAX_COUNT_FILES,
     "count_max_bytes": MAX_COUNT_BYTES,
     "count_max_file_bytes": MAX_COUNT_FILE_BYTES,
@@ -204,6 +206,37 @@ def emit(value: Any, limit: int | None = None) -> None:
     print(rendered)
 
 
+def require_session_capacity(session: dict[str, Any], requested_bytes: int) -> None:
+    """Protect the model from unbounded cumulative Helper output.
+
+    Only Helper stdout is measured, not the entire model context.
+    """
+    maximum = session.get("budgets", {}).get("session_helper_output_bytes", MAX_SESSION_OUTPUT_BYTES)
+    spent = session.get("usage", {}).get("helper_output_bytes", 0)
+    if spent + requested_bytes > maximum:
+        raise ValueError(
+            "Session Helper output budget is almost exhausted. Checkpoint work, "
+            "use a smaller bounded operation, or start a new inventory/session."
+        )
+
+
+def emit_session(
+    value: Any, session_dir: Path, session: dict[str, Any],
+    limit: int | None = None, control: bool = False
+) -> None:
+    rendered = json_text(value)
+    actual = len(rendered.encode("utf-8"))
+    if limit is not None and actual > limit:
+        raise RuntimeError("Output exceeded the declared response budget.")
+    if not control:
+        require_session_capacity(session, actual)
+    usage = session.setdefault("usage", {"helper_output_bytes": 0})
+    usage["helper_output_bytes"] = usage.get("helper_output_bytes", 0) + actual
+    session["updated_at"] = now_iso()
+    save_session(session_dir, session)
+    print(rendered)
+
+
 def emit_inventory_summary(summary: dict[str, Any]) -> None:
     """Always return the session ID, even for very wide repository inventories."""
     inventory = summary["inventory"]
@@ -211,7 +244,7 @@ def emit_inventory_summary(summary: dict[str, Any]) -> None:
     for _ in range(100):
         if len(json_text(summary).encode("utf-8")) <= MAX_INVENTORY_OUTPUT:
             emit(summary, MAX_INVENTORY_OUTPUT)
-            return
+            return len(json_text(summary).encode("utf-8"))
         inventory["summary_truncated"] = True
         candidates = inventory["candidate_files"]
         top_level = inventory["top_level"]
@@ -229,7 +262,7 @@ def emit_inventory_summary(summary: dict[str, Any]) -> None:
                 del inventory["excluded_counts"][key]
         else:
             break
-    emit({
+    fallback = {
         "session_id": summary["session_id"],
         "repository": summary["repository"],
         "inventory": {
@@ -242,7 +275,9 @@ def emit_inventory_summary(summary: dict[str, Any]) -> None:
         },
         "reuse": summary["reuse"],
         "state_directory": summary["state_directory"],
-    }, MAX_INVENTORY_OUTPUT)
+    }
+    emit(fallback, MAX_INVENTORY_OUTPUT)
+    return len(json_text(fallback).encode("utf-8"))
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -797,6 +832,7 @@ def inventory_command(args: argparse.Namespace) -> dict[str, Any]:
             "next_task": "classify repository and create a selective scan plan",
         },
         "budgets": DEFAULT_BUDGETS,
+        "usage": {"helper_output_bytes": 0},
         "manifest_file": str(manifest_path),
         "evidence_file": str(evidence_path),
         "previous_session_id": previous_id,
@@ -825,7 +861,9 @@ def inventory_command(args: argparse.Namespace) -> dict[str, Any]:
         "reuse": session["reuse"],
         "state_directory": str(session_dir),
     }
-    emit_inventory_summary(summary)
+    output_size = emit_inventory_summary(summary)
+    session["usage"]["helper_output_bytes"] += output_size
+    save_session(session_dir, session)
     return session
 
 
@@ -862,6 +900,7 @@ def search_command(args: argparse.Namespace) -> None:
     root = Path(args.repo).expanduser().resolve(strict=True)
     session_dir, session, manifest = load_session(root, args.session, args.state_dir)
     normalized_glob = normalize_relative_path(args.glob) if args.glob else None
+    require_session_capacity(session, MAX_SEARCH_OUTPUT)
     entries = manifest_entries(manifest, normalized_glob)
     if len(args.pattern) > 256:
         raise ValueError("Search pattern exceeds the 256-character safety limit.")
@@ -914,7 +953,7 @@ def search_command(args: argparse.Namespace) -> None:
         current_paths, truncated_scope = current_scope_paths(root, tracked, normalized_glob)
         if truncated_scope or current_paths != [item["path"] for item in entries]:
             raise ValueError("Search file scope changed. Run inventory again.")
-        emit({
+        emit_session({
             "job_id": job_key, "pattern": existing["pattern"],
             "glob": normalized_glob, "complete": existing["complete"],
             "finished": True, "match_lines_found": 0,
@@ -923,7 +962,7 @@ def search_command(args: argparse.Namespace) -> None:
             "skipped_files": existing["skipped_files"][:20],
             "skipped_count": existing["skipped_count"],
             "snippets": [], "resumed": True,
-        }, MAX_SEARCH_OUTPUT)
+        }, session_dir, session, MAX_SEARCH_OUTPUT)
         return
 
     explicit_offset = getattr(args, "offset", None)
@@ -1084,12 +1123,13 @@ def search_command(args: argparse.Namespace) -> None:
     }
     while len(json_text(result).encode("utf-8")) > MAX_SEARCH_OUTPUT and result["snippets"]:
         result["snippets"].pop()
-    emit(result, MAX_SEARCH_OUTPUT)
+    emit_session(result, session_dir, session, MAX_SEARCH_OUTPUT)
 
 
 def read_command(args: argparse.Namespace) -> None:
     root = Path(args.repo).expanduser().resolve(strict=True)
     session_dir, session, manifest = load_session(root, args.session, args.state_dir)
+    require_session_capacity(session, MAX_READ_OUTPUT)
     entry_map = {item["path"]: item for item in manifest["inventory"]["entries"]}
     rel = normalize_relative_path(args.path)
     if rel not in entry_map or not entry_map[rel]["text_candidate"] or entry_map[rel]["excluded_reason"]:
@@ -1156,8 +1196,7 @@ def read_command(args: argparse.Namespace) -> None:
     while len(json_text(result).encode("utf-8")) > MAX_READ_OUTPUT and result["content"]:
         result["content"] = result["content"][: int(len(result["content"]) * 0.8)]
         result["truncated"] = True
-    emit(result, MAX_READ_OUTPUT)
-    save_session(session_dir, session)
+    emit_session(result, session_dir, session, MAX_READ_OUTPUT)
 
 
 def count_command(args: argparse.Namespace) -> None:
@@ -1244,7 +1283,7 @@ def count_command(args: argparse.Namespace) -> None:
         job["complete"] = False
         job["skipped_large_files"] = []
     if job.get("finished") or job["complete"]:
-        emit({
+        emit_session({
             "job_id": job_key,
             "pattern": redact_text(args.pattern),
             "glob": normalized_glob,
@@ -1259,7 +1298,7 @@ def count_command(args: argparse.Namespace) -> None:
             "finished": job["finished"],
             "next_offset": job["next_offset"],
             "incomplete_reason": job.get("incomplete_reason"),
-        })
+        }, session_dir, session)
         return
 
     if job.get("retry_mode"):
@@ -1349,7 +1388,7 @@ def count_command(args: argparse.Namespace) -> None:
         job["incomplete_reason"] = "More bounded batches remain."
 
     save_session(session_dir, session)
-    emit({
+    emit_session({
         "job_id": job_key,
         "pattern": redact_text(args.pattern),
         "glob": normalized_glob,
@@ -1365,7 +1404,7 @@ def count_command(args: argparse.Namespace) -> None:
         "next_offset": job["next_offset"],
         "remaining_files": max(0, len(work_entries) - index),
         "incomplete_reason": job["incomplete_reason"],
-    })
+    }, session_dir, session)
 
 
 def evidence_add_command(args: argparse.Namespace) -> None:
@@ -1403,13 +1442,13 @@ def evidence_add_command(args: argparse.Namespace) -> None:
     }
     append_jsonl(session_dir / "evidence.jsonl", record)
     save_session(session_dir, session)
-    emit({
+    emit_session({
         "stored": True,
         "evidence_id": record["id"],
         "classification": record["classification"],
         "source": rel,
         "source_sha256": record["sources"][0]["sha256"],
-    })
+    }, session_dir, session)
 
 
 def checkpoint_command(args: argparse.Namespace) -> None:
@@ -1430,20 +1469,20 @@ def checkpoint_command(args: argparse.Namespace) -> None:
     else:
         session["status"] = "active"
     save_session(session_dir, session)
-    emit({
+    emit_session({
         "session_id": session["session_id"],
         "phase": session["phase"],
         "status": session["status"],
         "completed_tasks": session["checkpoint"]["completed_tasks"],
         "next_task": session["checkpoint"]["next_task"],
-    })
+    }, session_dir, session, control=True)
 
 
 def resume_command(args: argparse.Namespace) -> None:
     root = Path(args.repo).expanduser().resolve(strict=True)
     session_dir, session, manifest = load_session(root, args.session, args.state_dir)
     evidence_count = sum(1 for _ in evidence_records(session_dir / "evidence.jsonl"))
-    emit({
+    emit_session({
         "session_id": session["session_id"],
         "repository": session["repository"],
         "status": session["status"],
@@ -1477,13 +1516,15 @@ def resume_command(args: argparse.Namespace) -> None:
             for key, value in session["count_jobs"].items()
         },
         "state_directory": str(session_dir),
-    })
+        "helper_output_bytes": session.get("usage", {}).get("helper_output_bytes", 0),
+    }, session_dir, session, control=True)
 
 
 def context_pack_command(args: argparse.Namespace) -> None:
     root = Path(args.repo).expanduser().resolve(strict=True)
     session_dir, session, manifest = load_session(root, args.session, args.state_dir)
     max_bytes = min(max(args.max_bytes, 1), MAX_CONTEXT_PACK)
+    require_session_capacity(session, max_bytes)
     result = {
         "session_id": session["session_id"],
         "claims": [],
@@ -1521,7 +1562,7 @@ def context_pack_command(args: argparse.Namespace) -> None:
         if len(json_text(result).encode("utf-8")) > max_bytes:
             result["claims"].pop()
             result["omitted_by_budget"] += 1
-    emit(result, max_bytes)
+    emit_session(result, session_dir, session, max_bytes)
 
 
 def prune_command(args: argparse.Namespace) -> None:
