@@ -46,11 +46,11 @@ Use for project-owned APP/CBB/FWK/HAL-style components and repositories with com
 - <跨进程共享状态、设备节点、socket、服务端点和持久化路径。>
 - <已确认的下游消费者；注明扫描边界。>
 
-## 5. 既有代码约定
+## 5. 项目特有约束与风险
 
-- <满足证据阈值的命名、日志、错误处理、资源生命周期或并发模式。>
-- <工具/CI 强制的仓库约束及其配置路径。>
-- <具体、已验证的历史坑点及其保护依据。>
+- <已确认的启动/退出顺序、回调线程上下文、资源所有权和生命周期约束。>
+- <跨组件的协议/错误码/注册键等一致性要求，以及可验证的保护依据。>
+- <生成文件的权威输入位置、真实兼容性边界或历史回归风险。>
 
 ## 6. 测试与工具
 
@@ -136,6 +136,6 @@ Start from the custom-component profile, keep only relevant sections, and add a 
 - Distinguish configured, built, deployed, and runtime-loaded.
 - Prefer a path or symbol over a long copied code fragment.
 - Use 需确认 only for a concrete, evidence-backed discrepancy.
-- Counts are optional; include scope and denominator when they support a stable convention.
+- Counts are optional and only support a specific interface, registration, or dependency-coverage question; never derive coding-style rules.
 - Do not include scan timestamps, raw metric dumps, or irrelevant inventories.
-- Never include build/test/lint commands, Git workflow, generic coding standards, a standalone open-questions section, build.sh as a build reference, secrets, or speculative architecture.
+- Never include build/test/lint commands, Git workflow, formatting or coding-style rules (including NULL/nullptr, naming, header guards, and copyright-header coverage), generic coding standards, a standalone open-questions section, build.sh as a build reference, secrets, or speculative architecture.
