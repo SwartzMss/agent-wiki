@@ -24,13 +24,13 @@ class AgentWikiTests(unittest.TestCase):
         (self.repo / "vendor" / "ignored").mkdir(parents=True)
         (self.repo / "README.md").write_text("# Demo\n", encoding="utf-8")
         (self.repo / "src" / "one.cpp").write_text(
-            "int main() { return nullptr == 0; }\n", encoding="utf-8"
+            "int main() { return RegisterService(); }\n", encoding="utf-8"
         )
         (self.repo / "src" / "two.cpp").write_text(
-            "void f() { auto p = nullptr; }\n", encoding="utf-8"
+            "void f() { RegisterService(); }\n", encoding="utf-8"
         )
         (self.repo / "src" / "three.cpp").write_text(
-            "void g() { auto p = nullptr; }\n", encoding="utf-8"
+            "void g() { RegisterService(); }\n", encoding="utf-8"
         )
         (self.repo / "build.sh").write_text("echo do-not-read\n", encoding="utf-8")
         (self.repo / "vendor" / "ignored" / "vendor.cpp").write_text(
@@ -95,7 +95,7 @@ class AgentWikiTests(unittest.TestCase):
     def test_count_resumes_in_bounded_batches(self):
         result = self.inventory()
         args = argparse.Namespace(**self.session_args(result["session_id"]))
-        args.pattern = "nullptr"
+        args.pattern = "RegisterService"
         args.glob = "src/*.cpp"
         args.regex = False
         args.case_sensitive = True
