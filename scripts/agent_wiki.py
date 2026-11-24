@@ -534,6 +534,48 @@ def manifest_entries(manifest: dict[str, Any], glob_pattern: str | None = None) 
     return entries
 
 
+def current_scope_paths(root: Path, tracked: set[str], glob_pattern: str | None) -> tuple[list[str], bool]:
+    """Validate only names in the file scope, avoiding repeated full metadata scans."""
+    paths: list[str] = []
+    errors: list[str] = []
+    truncated = False
+
+    def onerror(error: OSError) -> None:
+        errors.append(type(error).__name__)
+
+    for current, dirs, files in os.walk(
+        root, topdown=True, followlinks=False, onerror=onerror
+    ):
+        directory = Path(current)
+        rel_dir = directory.relative_to(root).as_posix()
+        kept = []
+        for name in sorted(dirs):
+            child = directory / name
+            rel = (PurePosixPath(rel_dir) / name).as_posix() if rel_dir != "." else name
+            if child.is_symlink() or excluded_directory(rel, name, tracked, child):
+                continue
+            kept.append(name)
+        dirs[:] = kept
+        for name in sorted(files):
+            path = directory / name
+            if path.is_symlink():
+                continue
+            rel = (PurePosixPath(rel_dir) / name).as_posix() if rel_dir != "." else name
+            if excluded_file(rel, name) or not is_text_candidate(name, None):
+                continue
+            if glob_pattern and not fnmatch.fnmatch(rel, glob_pattern):
+                continue
+            paths.append(rel)
+            if len(paths) > MAX_INVENTORY_ENTRIES:
+                truncated = True
+                break
+        if truncated:
+            break
+    if errors:
+        raise ValueError("Repository directory scan failed; count scope cannot be verified.")
+    return paths, truncated
+
+
 def evidence_records(path: Path) -> Iterable[dict[str, Any]]:
     """Stream records instead of loading a potentially large JSONL file."""
     if not path.is_file():
@@ -929,7 +971,7 @@ def search_command(args: argparse.Namespace) -> None:
         "finished": existing["finished"], "next_offset": index,
         "next_line_offset": next_line_offset,
         "cursor": {"file_offset": index, "line_offset": next_line_offset},
-        "remaining_files": max(0, len(entries) - index),
+        "remaining_files": max(0, len(work_entries) - index),
         "skipped_files": skipped[:20], "skipped_count": existing["skipped_count"],
         "stopped_on_budget": stopped_for_budget,
         "resumed": index != 0 or line_offset != 0,
@@ -1018,20 +1060,14 @@ def count_command(args: argparse.Namespace) -> None:
     normalized_glob = normalize_relative_path(args.glob) if args.glob else None
     entries = manifest_entries(manifest, normalized_glob)
 
-    # An inventory is only a snapshot. Ensure added/deleted files are never silently
-    # omitted from a supposedly complete count, and use current per-file sizes.
-    git, tracked = git_metadata(root)
-    current_inventory = build_inventory(root, git, tracked, MAX_INVENTORY_ENTRIES)
-    current_entries = manifest_entries({"inventory": current_inventory}, normalized_glob)
-    if (
-        [item["path"] for item in entries] != [item["path"] for item in current_entries]
-        or (current_inventory["truncated"] and not manifest["inventory"]["truncated"])
-    ):
+    # Verify membership using only names, not a full per-file metadata inventory.
+    _, tracked = git_metadata(root)
+    current_paths, scope_truncated = current_scope_paths(root, tracked, normalized_glob)
+    if ([item["path"] for item in entries] != current_paths or scope_truncated):
         raise ValueError(
-            "Repository file scope changed since inventory. Run inventory again "
-            "before counting; prior cached results must not be reused."
+            "Repository file scope changed since inventory or could not be validated. "
+            "Run inventory again before counting."
         )
-    live_by_path = {item["path"]: item for item in current_entries}
 
     flags = 0 if args.case_sensitive else re.IGNORECASE
     expression = args.pattern if args.regex else re.escape(args.pattern)
@@ -1052,14 +1088,22 @@ def count_command(args: argparse.Namespace) -> None:
     if previous_job and not args.restart:
         fingerprints = previous_job.get("source_fingerprints")
         if fingerprints is None:
-            invalidated_cache = True  # Legacy job without content validation.
+            invalidated_cache = True
         else:
-            for rel, expected in fingerprints.items():
+            for rel, stamp in fingerprints.items():
                 try:
-                    if hash_file(safe_file(root, rel)) != expected:
+                    path = safe_file(root, rel)
+                    st = path.stat()
+                    if not isinstance(stamp, dict):
                         invalidated_cache = True
                         break
-                except (OSError, ValueError):
+                    if st.st_size == stamp["size"] and st.st_mtime_ns == stamp["mtime_ns"]:
+                        continue
+                    if hash_file(path) != stamp["sha256"]:
+                        invalidated_cache = True
+                        break
+                    stamp["size"], stamp["mtime_ns"] = st.st_size, st.st_mtime_ns
+                except (OSError, ValueError, KeyError):
                     invalidated_cache = True
                     break
 
@@ -1076,33 +1120,65 @@ def count_command(args: argparse.Namespace) -> None:
             "bytes_scanned": 0,
             "skipped_large_files": [],
             "source_fingerprints": {},
+            "retry_paths": [],
+            "retry_mode": False,
             "finished": False,
             "complete": False,
         }
     job = session["count_jobs"][job_key]
+    if getattr(args, "retry_skipped", False) and job.get("finished") and job["skipped_large_files"]:
+        job["retry_paths"] = list(job["skipped_large_files"])
+        job["retry_mode"] = True
+        job["next_offset"] = 0
+        job["finished"] = False
+        job["complete"] = False
+        job["skipped_large_files"] = []
     if job.get("finished") or job["complete"]:
-        emit({"job_id": job_key, "invalidated_cache": invalidated_cache, **job})
+        emit({
+            "job_id": job_key,
+            "pattern": redact_text(args.pattern),
+            "glob": normalized_glob,
+            "invalidated_cache": invalidated_cache,
+            "files_scanned": job["files_scanned"],
+            "files_matched": job["files_matched"],
+            "matches": job["matches"],
+            "bytes_scanned": job["bytes_scanned"],
+            "skipped_large_files": job["skipped_large_files"][:20],
+            "skipped_count": len(job["skipped_large_files"]),
+            "complete": job["complete"],
+            "finished": job["finished"],
+            "next_offset": job["next_offset"],
+            "incomplete_reason": job.get("incomplete_reason"),
+        })
         return
+
+    if job.get("retry_mode"):
+        retry_set = set(job["retry_paths"])
+        work_entries = [item for item in entries if item["path"] in retry_set]
+    else:
+        work_entries = entries
 
     max_files = min(max(args.max_files, 1), MAX_COUNT_FILES)
     max_bytes = min(max(args.max_bytes, 1), MAX_COUNT_BYTES)
     batch_files = 0
     batch_bytes = 0
     index = job["next_offset"]
-    while index < len(entries) and batch_files < max_files:
-        entry = entries[index]
-        size = live_by_path[entry["path"]]["size"]
+    while index < len(work_entries) and batch_files < max_files:
+        entry = work_entries[index]
+        try:
+            size = safe_file(root, entry["path"]).stat().st_size
+        except (OSError, ValueError):
+            job["skipped_large_files"].append(entry["path"])
+            batch_files += 1
+            index += 1
+            continue
         if size > MAX_COUNT_FILE_BYTES:
-            skipped = job["skipped_large_files"]
-            if len(skipped) < 20:
-                skipped.append(entry["path"])
+            job["skipped_large_files"].append(entry["path"])
             batch_files += 1
             index += 1
             continue
         if size > max_bytes:
-            skipped = job["skipped_large_files"]
-            if len(skipped) < 20:
-                skipped.append(entry["path"])
+            job["skipped_large_files"].append(entry["path"])
             batch_files += 1
             index += 1
             continue
@@ -1124,14 +1200,17 @@ def count_command(args: argparse.Namespace) -> None:
                         1 for _ in matcher.finditer(raw_line.decode("utf-8", errors="replace"))
                     )
         except (OSError, ValueError):
-            skipped = job["skipped_large_files"]
-            if len(skipped) < 20:
-                skipped.append(entry["path"])
+            job["skipped_large_files"].append(entry["path"])
             batch_files += 1
             index += 1
             continue
         job["files_scanned"] += 1
-        job["source_fingerprints"][entry["path"]] = fingerprint.hexdigest()
+        file_stat = path.stat()
+        job["source_fingerprints"][entry["path"]] = {
+            "sha256": fingerprint.hexdigest(),
+            "size": file_stat.st_size,
+            "mtime_ns": file_stat.st_mtime_ns,
+        }
         if file_matches:
             job["files_matched"] += 1
         job["matches"] += file_matches
@@ -1141,18 +1220,21 @@ def count_command(args: argparse.Namespace) -> None:
         index += 1
 
     job["next_offset"] = index
-    job["finished"] = index >= len(entries)
+    job["finished"] = index >= len(work_entries)
     job["complete"] = (
         job["finished"]
         and not job["skipped_large_files"]
-        and not manifest["inventory"]["truncated"]
-        and not current_inventory["truncated"]
+        and manifest["inventory"].get("inventory_complete", False)
+        and not scope_truncated
     )
+    if job["finished"]:
+        job["retry_mode"] = False
+        job["retry_paths"] = []
     job["incomplete_reason"] = None
     if job["skipped_large_files"]:
         job["incomplete_reason"] = "One or more files were skipped because they exceeded the per-file limit or could not be read."
-    elif manifest["inventory"]["truncated"] or current_inventory["truncated"]:
-        job["incomplete_reason"] = "The source manifest was truncated."
+    elif not manifest["inventory"].get("inventory_complete", False):
+        job["incomplete_reason"] = "The source manifest was truncated or had scan errors."
     elif not job["complete"]:
         job["incomplete_reason"] = "More bounded batches remain."
 
@@ -1166,7 +1248,9 @@ def count_command(args: argparse.Namespace) -> None:
         "files_matched": job["files_matched"],
         "matches": job["matches"],
         "bytes_scanned": job["bytes_scanned"],
-        "skipped_large_files": job["skipped_large_files"],
+        "skipped_large_files": job["skipped_large_files"][:20],
+        "skipped_count": len(job["skipped_large_files"]),
+        "finished": job["finished"],
         "complete": job["complete"],
         "next_offset": job["next_offset"],
         "remaining_files": max(0, len(entries) - index),
@@ -1376,6 +1460,7 @@ def build_parser() -> argparse.ArgumentParser:
     count.add_argument("--regex", action="store_true")
     count.add_argument("--case-sensitive", action="store_true")
     count.add_argument("--restart", action="store_true", help="Restart this count job from the beginning.")
+    count.add_argument("--retry-skipped", action="store_true", help="Retry only previously skipped count files.")
     count.add_argument("--max-files", type=int, default=MAX_COUNT_FILES)
     count.add_argument("--max-bytes", type=int, default=MAX_COUNT_BYTES)
 
