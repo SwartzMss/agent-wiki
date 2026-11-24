@@ -261,7 +261,7 @@ def git_metadata(root: Path) -> tuple[dict[str, Any], set[str]]:
 
     head = git_output(root, "rev-parse", "HEAD")
     branch = git_output(root, "branch", "--show-current")
-    status = git_output(root, "status", "--porcelain", "--untracked-files=no")
+    status = git_output(root, "status", "--porcelain", "--untracked-files=normal")
     tracked_raw = git_output(root, "ls-files", "-z")
     tracked = set(tracked_raw.split("\0")) if tracked_raw else set()
     tracked.discard("")
@@ -771,6 +771,8 @@ def search_command(args: argparse.Namespace) -> None:
     entries = manifest_entries(manifest, normalized_glob)
     if len(args.pattern) > 256:
         raise ValueError("Search pattern exceeds the 256-character safety limit.")
+    if args.regex and re.search(r"\([^)]*[+*][^)]*\)\s*[+*{]", args.pattern):
+        raise ValueError("Nested quantified regular expressions are not supported.")
     flags = 0 if args.case_sensitive else re.IGNORECASE
     expression = args.pattern if args.regex else re.escape(args.pattern)
     try:
@@ -938,7 +940,7 @@ def search_command(args: argparse.Namespace) -> None:
                 continue
             if file_stopped:
                 if stopped_for_budget:
-                    next_line_offset = line_number - 1
+                    next_line_offset = line_number
                 # End-of-file after a match cap is handled on next resume.
                 break
             index += 1
@@ -1069,6 +1071,10 @@ def count_command(args: argparse.Namespace) -> None:
             "Run inventory again before counting."
         )
 
+    if len(args.pattern) > 256:
+        raise ValueError("Count pattern exceeds the 256-character safety limit.")
+    if args.regex and re.search(r"\([^)]*[+*][^)]*\)\s*[+*{]", args.pattern):
+        raise ValueError("Nested quantified regular expressions are not supported.")
     flags = 0 if args.case_sensitive else re.IGNORECASE
     expression = args.pattern if args.regex else re.escape(args.pattern)
     try:
