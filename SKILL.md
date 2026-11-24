@@ -124,7 +124,7 @@ At this stage:
 - Do not inspect build.sh.
 - Do not treat directory names as proof of module responsibilities.
 
-If the inventory is truncated, state that fact. Do not claim the inventory is exhaustive.
+If the inventory is truncated or reports file/directory scan errors, state that fact. Do not claim the inventory is exhaustive. Nested Git repositories, submodules, and Windows junctions are excluded by default.
 
 ### Phase B — Classify and create a scan plan
 
@@ -170,9 +170,9 @@ Default limits are defined in references/SCAN_POLICY.md. Do not raise them merel
 
 Counting is optional: run it only to confirm a concrete project contract, registration site, or dependency question, never to survey coding style or infer coding rules. Search is for locating evidence, not for generating a source dump. Read only the smallest range that answers the current question. A search result or count is incomplete unless the helper explicitly reports completion.
 
-**Resume search precisely:** when a search returns `complete=false`, pass both `next_offset` (file index) and `next_line_offset` (line index) as `--offset` and `--line-offset` for the next bounded batch. Do not discard the line cursor, or matches remaining in a large file may be skipped. When `skipped_files` is nonempty or the manifest is truncated, report partial coverage even after reaching the end.
+**Resume search precisely:** the helper now persists Search Jobs in the external Session. Repeat the same query to automatically continue, or pass both `next_offset` and `next_line_offset` using `--offset` and `--line-offset`. Do not discard the line cursor, or matches remaining in a large file may be skipped. When `skipped_files` is nonempty or the manifest is truncated, report partial coverage even after reaching the end.
 
-**Do not trust stale counts:** the helper validates file fingerprints before reusing counted results. If applicable files were added or removed, create a fresh inventory/session and rerun the question; do not report an old count as complete.
+**Do not trust stale counts:** the helper stores source size, mtime, and SHA-256, avoiding repeated hashing when file metadata remains stable. For finished but incomplete counts, `count --retry-skipped` retries omitted files without recounting successful sources. If applicable files were added or removed, create a fresh inventory/session and rerun the question; do not report an old count as complete.
 
 For large repositories, split inspection into logical units such as runtime entry points, platform integration, public interfaces, IPC contracts, or test wiring. Finish one unit, persist its evidence, checkpoint, and then move to the next.
 
