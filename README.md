@@ -72,12 +72,32 @@ Helper 的默认单次操作限制如下。这些数值是硬上限，不是需�
 
 大型搜索和全范围计数支持分批执行与断点续接。只要结果被截断或仅完成部分扫描，就不能将其描述为完整结果。
 
+### 搜索断点与 Count 缓存
+
+搜索会返回 `complete`、`cursor.file_offset` 和 `cursor.line_offset`。如果 `complete=false` 且有剩余文件，应使用返回的两个游标值继续：
+
+~~~bash
+python scripts/agent_wiki.py search --repo /path/to/repository --session SESSION_ID --pattern "RegisterService" --offset FILE_OFFSET --line-offset LINE_OFFSET
+~~~
+
+这里的 `FILE_OFFSET`、`LINE_OFFSET` 不是固定值，必须使用上一次返回的 `next_offset` 与 `next_line_offset`。这样即使单个文件内的匹配超过上限，也不会跳过该文件剩余行。
+
+`count` 使用 SHA-256 校验已统计文件。源文件变化会使旧统计失效并重新计算；发现适用范围内新增/删除文件时，要求重新执行 `inventory` 建立新 Session。对于被截断的 Manifest 或跳过的文件，结果不得宣称完整。
+
+### Windows / Linux 兼容
+
+- 支持 Windows 和 Linux，不要求 WSL。
+- 最低版本 Python 3.9，除此之外没有第三方 Python 依赖。
+- `--path` 和 `--glob` 接受 `src/file.cpp` 或 Windows 风格的 `src\\file.cpp`，内部统一使用仓库相对路径。
+- 默认缓存目录：Linux 为 `~/.cache/agent-wiki/`（可通过 `XDG_CACHE_HOME` 调整）；Windows 为 `%LOCALAPPDATA%\\agent-wiki\\`。
+- CI 同时覆盖 Python 3.9 / 3.12 与 Ubuntu / Windows Runner。
+
 ## 仓库结构
 
 - `SKILL.md`：可移植的工作流程、约束和调用方式。
 - `references/SCAN_POLICY.md`：分阶段扫描策略、上下文预算和恢复策略。
 - `references/SCAN_CHECKLIST.md`：扫描时可选择使用的证据发现清单。
-- `references/PATTERN_CATALOG.md`：候选代码模式及其证据门槛。
+- `references/PATTERN_CATALOG.md`：架构、技术契约与项目特有约束的证据目录（不做编码风格统计）。
 - `references/EVIDENCE_POLICY.md`：结论分类和源码可追溯性规范。
 - `references/SECTION_TEMPLATES.md`：自研组件和 OSS 仓库的文档模板。
 - `schemas/`：Source Manifest、Evidence 和 Session 的 JSON Schema。
@@ -101,7 +121,8 @@ Helper 的默认单次操作限制如下。这些数值是硬上限，不是需�
 - Helper 不向目标仓库写入扫描数据或其他文件。
 - Session 和 Evidence 默认保存在用户缓存目录；也可以指定目标仓库之外的状态目录。
 - 刷新已有 `AGENTS.md` 时保留无法从源码重新推导的人工编写内容，并先展示完整差异，获得用户明确批准后再替换。
-- 不记录密钥、密码、Token、私钥等敏感值。
+- 默认排除 `.env`、密钥文件、常见凭据文件等潜在敏感来源，并对读取/搜索输出和 Evidence 字段进行基础脱敏。自动脱敏是尽力而为，**不等于能够识别所有私密信息**。
+- 不记录密钥、密码、Token、私钥等敏感值；人工检查输出中是否存在非标准格式的敏感配置。
 
 ## 当前状态
 
