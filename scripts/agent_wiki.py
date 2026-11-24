@@ -297,7 +297,9 @@ def is_text_candidate(name: str, reason: str | None) -> bool:
     if reason:
         return False
     suffix = Path(name).suffix.lower()
-    return suffix in TEXT_EXTENSIONS or name.lower() in TEXT_NAMES
+    if name.lower() in TEXT_NAMES:
+        return True
+    return bool(suffix) and suffix in TEXT_EXTENSIONS
 
 
 def is_candidate_file(rel: str) -> bool:
@@ -814,7 +816,21 @@ def read_command(args: argparse.Namespace) -> None:
 def count_command(args: argparse.Namespace) -> None:
     root = Path(args.repo).expanduser().resolve(strict=True)
     session_dir, session, manifest = load_session(root, args.session, args.state_dir)
-    entries = manifest_entries(manifest, args.glob)
+    normalized_glob = normalize_relative_path(args.glob) if args.glob else None
+    entries = manifest_entries(manifest, normalized_glob)
+
+    # An inventory is only a snapshot. Ensure added/deleted files are never silently
+    # omitted from a supposedly complete count, and use current per-file sizes.
+    git, tracked = git_metadata(root)
+    current_inventory = build_inventory(root, git, tracked, MAX_INVENTORY_ENTRIES)
+    current_entries = manifest_entries({"inventory": current_inventory}, normalized_glob)
+    if [item["path"] for item in entries] != [item["path"] for item in current_entries]:
+        raise ValueError(
+            "Repository file scope changed since inventory. Run inventory again "
+            "before counting; prior cached results must not be reused."
+        )
+    live_by_path = {item["path"]: item for item in current_entries}
+
     flags = 0 if args.case_sensitive else re.IGNORECASE
     expression = args.pattern if args.regex else re.escape(args.pattern)
     try:
@@ -824,13 +840,31 @@ def count_command(args: argparse.Namespace) -> None:
 
     job_identity = json.dumps({
         "pattern": args.pattern, "regex": args.regex,
-        "case_sensitive": args.case_sensitive, "glob": args.glob,
+        "case_sensitive": args.case_sensitive, "glob": normalized_glob,
     }, sort_keys=True)
     job_key = hashlib.sha256(job_identity.encode("utf-8")).hexdigest()[:12]
-    if args.restart or job_key not in session["count_jobs"]:
+    # A complete or partial count is reusable only while every already scanned
+    # source has the exact same SHA-256. Hash validation also detects same-size edits.
+    previous_job = session["count_jobs"].get(job_key)
+    invalidated_cache = False
+    if previous_job and not args.restart:
+        fingerprints = previous_job.get("source_fingerprints")
+        if fingerprints is None:
+            invalidated_cache = True  # Legacy job without content validation.
+        else:
+            for rel, expected in fingerprints.items():
+                try:
+                    if hash_file(safe_file(root, rel)) != expected:
+                        invalidated_cache = True
+                        break
+                except (OSError, ValueError):
+                    invalidated_cache = True
+                    break
+
+    if args.restart or invalidated_cache or job_key not in session["count_jobs"]:
         session["count_jobs"][job_key] = {
             "pattern": args.pattern,
-            "glob": args.glob,
+            "glob": normalized_glob,
             "regex": args.regex,
             "case_sensitive": args.case_sensitive,
             "next_offset": 0,
@@ -839,11 +873,13 @@ def count_command(args: argparse.Namespace) -> None:
             "matches": 0,
             "bytes_scanned": 0,
             "skipped_large_files": [],
+            "source_fingerprints": {},
+            "finished": False,
             "complete": False,
         }
     job = session["count_jobs"][job_key]
-    if job["complete"]:
-        emit({"job_id": job_key, **job})
+    if job.get("finished") or job["complete"]:
+        emit({"job_id": job_key, "invalidated_cache": invalidated_cache, **job})
         return
 
     max_files = min(max(args.max_files, 1), MAX_COUNT_FILES)
@@ -853,7 +889,7 @@ def count_command(args: argparse.Namespace) -> None:
     index = job["next_offset"]
     while index < len(entries) and batch_files < max_files:
         entry = entries[index]
-        size = entry["size"]
+        size = live_by_path[entry["path"]]["size"]
         if size > MAX_COUNT_FILE_BYTES:
             skipped = job["skipped_large_files"]
             if len(skipped) < 20:
@@ -873,9 +909,13 @@ def count_command(args: argparse.Namespace) -> None:
         try:
             path = safe_file(root, entry["path"])
             file_matches = 0
-            with path.open("r", encoding="utf-8", errors="replace") as handle:
-                for line in handle:
-                    file_matches += sum(1 for _ in matcher.finditer(line))
+            fingerprint = hashlib.sha256()
+            with path.open("rb") as handle:
+                for raw_line in handle:
+                    fingerprint.update(raw_line)
+                    file_matches += sum(
+                        1 for _ in matcher.finditer(raw_line.decode("utf-8", errors="replace"))
+                    )
         except (OSError, ValueError):
             skipped = job["skipped_large_files"]
             if len(skipped) < 20:
@@ -884,6 +924,7 @@ def count_command(args: argparse.Namespace) -> None:
             index += 1
             continue
         job["files_scanned"] += 1
+        job["source_fingerprints"][entry["path"]] = fingerprint.hexdigest()
         if file_matches:
             job["files_matched"] += 1
         job["matches"] += file_matches
@@ -893,15 +934,17 @@ def count_command(args: argparse.Namespace) -> None:
         index += 1
 
     job["next_offset"] = index
+    job["finished"] = index >= len(entries)
     job["complete"] = (
-        index >= len(entries)
+        job["finished"]
         and not job["skipped_large_files"]
         and not manifest["inventory"]["truncated"]
+        and not current_inventory["truncated"]
     )
     job["incomplete_reason"] = None
     if job["skipped_large_files"]:
         job["incomplete_reason"] = "One or more files were skipped because they exceeded the per-file limit or could not be read."
-    elif manifest["inventory"]["truncated"]:
+    elif manifest["inventory"]["truncated"] or current_inventory["truncated"]:
         job["incomplete_reason"] = "The source manifest was truncated."
     elif not job["complete"]:
         job["incomplete_reason"] = "More bounded batches remain."
@@ -909,8 +952,9 @@ def count_command(args: argparse.Namespace) -> None:
     save_session(session_dir, session)
     emit({
         "job_id": job_key,
-        "pattern": args.pattern,
-        "glob": args.glob,
+        "pattern": redact_text(args.pattern),
+        "glob": normalized_glob,
+        "invalidated_cache": invalidated_cache,
         "files_scanned": job["files_scanned"],
         "files_matched": job["files_matched"],
         "matches": job["matches"],
@@ -1107,7 +1151,7 @@ def build_parser() -> argparse.ArgumentParser:
     count = commands.add_parser("count", help="Run or resume a bounded raw-text count job.")
     add_common(count)
     count.add_argument("--pattern", required=True)
-    count.add_argument("--glob", help="Optional repository-relative file glob.")
+    count.add_argument("--glob", help="Optional repository-relative file glob (backslashes accepted).")
     count.add_argument("--regex", action="store_true")
     count.add_argument("--case-sensitive", action="store_true")
     count.add_argument("--restart", action="store_true", help="Restart this count job from the beginning.")
