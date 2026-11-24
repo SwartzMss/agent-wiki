@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import uuid
@@ -209,14 +210,19 @@ def emit_inventory_summary(summary: dict[str, Any]) -> None:
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(json_text(value) + "\n", encoding="utf-8")
+    with os.fdopen(os.open(str(temp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as handle:
+        handle.write(json_text(value) + "\n")
+    if os.name != "nt":
+        temp.chmod(0o600)
     temp.replace(path)
 
 
 def append_jsonl(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
+    with os.fdopen(os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a", encoding="utf-8") as handle:
         handle.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n")
+    if os.name != "nt":
+        path.chmod(0o600)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -310,6 +316,16 @@ def is_generated(rel: str, name: str) -> bool:
     return False
 
 
+def is_reparse_or_symlink(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    try:
+        attributes = getattr(path.lstat(), "st_file_attributes", 0)
+    except OSError:
+        return False
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
 def excluded_directory(rel: str, name: str, tracked: set[str], path: Path | None = None) -> str | None:
     if path is not None and (path / ".git").exists():
         return "nested repository or submodule (read-only boundary)"
@@ -401,8 +417,8 @@ def build_inventory(root: Path, git: dict[str, Any], tracked: set[str], max_entr
         for dirname in sorted(dirs):
             dir_path = current_path / dirname
             rel = (PurePosixPath(rel_dir) / dirname).as_posix() if rel_dir != "." else dirname
-            if dir_path.is_symlink():
-                excluded_counts["symbolic link directory"] += 1
+            if is_reparse_or_symlink(dir_path):
+                excluded_counts["symbolic link or reparse directory"] += 1
                 continue
             reason = excluded_directory(rel, dirname, tracked, dir_path)
             if reason:
@@ -416,8 +432,8 @@ def build_inventory(root: Path, git: dict[str, Any], tracked: set[str], max_entr
         for filename in sorted(files):
             path = current_path / filename
             rel = (PurePosixPath(rel_dir) / filename).as_posix() if rel_dir != "." else filename
-            if path.is_symlink():
-                excluded_counts["symbolic link file"] += 1
+            if is_reparse_or_symlink(path):
+                excluded_counts["symbolic link or reparse file"] += 1
                 continue
             try:
                 stat_result = path.stat()
@@ -509,8 +525,8 @@ def safe_file(root: Path, rel_text: str) -> Path:
     current = root
     for part in relative.parts:
         current = current / part
-        if current.is_symlink():
-            raise ValueError("Symbolic links are not followed by the helper.")
+        if is_reparse_or_symlink(current):
+            raise ValueError("Symbolic links and reparse points are not followed by the helper.")
     resolved = current.resolve(strict=True)
     try:
         resolved.relative_to(root)
@@ -552,13 +568,13 @@ def current_scope_paths(root: Path, tracked: set[str], glob_pattern: str | None)
         for name in sorted(dirs):
             child = directory / name
             rel = (PurePosixPath(rel_dir) / name).as_posix() if rel_dir != "." else name
-            if child.is_symlink() or excluded_directory(rel, name, tracked, child):
+            if is_reparse_or_symlink(child) or excluded_directory(rel, name, tracked, child):
                 continue
             kept.append(name)
         dirs[:] = kept
         for name in sorted(files):
             path = directory / name
-            if path.is_symlink():
+            if is_reparse_or_symlink(path):
                 continue
             rel = (PurePosixPath(rel_dir) / name).as_posix() if rel_dir != "." else name
             if excluded_file(rel, name) or not is_text_candidate(name, None):
@@ -679,12 +695,15 @@ def inventory_command(args: argparse.Namespace) -> dict[str, Any]:
 
     session_id = uuid.uuid4().hex[:12]
     session_dir = parent / session_id
-    session_dir.mkdir(parents=True, exist_ok=False)
+    session_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
+    if os.name != "nt":
+        session_dir.chmod(0o700)
     manifest_path = session_dir / "source-manifest.json"
     evidence_path = session_dir / "evidence.jsonl"
     session_path = session_dir / "session.json"
     write_json(manifest_path, manifest)
-    evidence_path.touch()
+    with os.fdopen(os.open(str(evidence_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8"):
+        pass
 
     reused, invalidated, previous_id = reuse_previous_evidence(root, manifest, previous_dir, evidence_path)
     session = {
