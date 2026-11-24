@@ -5,56 +5,203 @@
   "description": "Metadata-only inventory for one target repository. Stored outside the target repository; never contains source file contents.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "repository", "created_at", "inventory"],
+  "required": [
+    "schema_version",
+    "repository",
+    "created_at",
+    "inventory"
+  ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": {
+      "const": 1
+    },
     "repository": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["root", "key", "git"],
+      "required": [
+        "root",
+        "key",
+        "git"
+      ],
       "properties": {
-        "root": { "type": "string", "minLength": 1 },
-        "key": { "type": "string", "pattern": "^[a-f0-9]{16}$" },
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{16}$"
+        },
         "git": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["is_repository", "head", "branch", "dirty"],
+          "required": [
+            "is_repository",
+            "head",
+            "branch",
+            "dirty"
+          ],
           "properties": {
-            "is_repository": { "type": "boolean" },
-            "head": { "type": ["string", "null"] },
-            "branch": { "type": ["string", "null"] },
-            "dirty": { "type": ["boolean", "null"] }
+            "is_repository": {
+              "type": "boolean"
+            },
+            "head": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "dirty": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
           }
         }
       }
     },
-    "created_at": { "type": "string", "format": "date-time" },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
     "inventory": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["file_count", "text_candidate_count", "by_extension", "top_level", "candidate_files", "excluded_counts", "truncated", "entries"],
+      "required": [
+        "file_count",
+        "text_candidate_count",
+        "by_extension",
+        "top_level",
+        "candidate_files",
+        "excluded_counts",
+        "truncated",
+        "entries"
+      ],
       "properties": {
-        "file_count": { "type": "integer", "minimum": 0 },
-        "text_candidate_count": { "type": "integer", "minimum": 0 },
-        "by_extension": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
-        "top_level": { "type": "array", "items": { "type": "string" } },
-        "candidate_files": { "type": "array", "items": { "type": "string" } },
-        "excluded_counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
-        "truncated": { "type": "boolean" },
+        "file_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text_candidate_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_extension": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "top_level": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "candidate_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "excluded_counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "truncated": {
+          "type": "boolean"
+        },
         "entries": {
           "type": "array",
           "maxItems": 50000,
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["path", "size", "mtime_ns", "extension", "text_candidate", "excluded_reason"],
+            "required": [
+              "path",
+              "size",
+              "mtime_ns",
+              "extension",
+              "text_candidate",
+              "excluded_reason"
+            ],
             "properties": {
-              "path": { "type": "string", "minLength": 1 },
-              "size": { "type": "integer", "minimum": 0 },
-              "mtime_ns": { "type": "integer", "minimum": 0 },
-              "extension": { "type": "string" },
-              "text_candidate": { "type": "boolean" },
-              "excluded_reason": { "type": ["string", "null"] }
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "mtime_ns": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "extension": {
+                "type": "string"
+              },
+              "text_candidate": {
+                "type": "boolean"
+              },
+              "excluded_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "inventory_complete": {
+          "type": "boolean"
+        },
+        "scan_errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "error"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "excluded_paths": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "reason"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
             }
           }
         }
