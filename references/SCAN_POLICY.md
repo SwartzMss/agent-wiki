@@ -82,7 +82,7 @@ For each logical task:
 5. Record the claim and source locator externally.
 6. Checkpoint the completed task and next task.
 
-If a search or count is incomplete, continue from the helper's saved cursor/job state or label the result incomplete. To continue a search, supply **both** `--offset <next_offset>` and `--line-offset <next_line_offset>` from the previous result. The next line offset is essential when a single file reaches the match cap. Do not infer complete registration, consumer, or contract coverage from a partial batch.
+If a search or count is incomplete, continue from the helper's saved cursor/job state or label the result incomplete. Search jobs are checkpointed in Session. Reuse the same search options to resume automatically, or supply **both** `--offset <next_offset>` and `--line-offset <next_line_offset>` from the previous result. The next line offset is essential when a single file reaches the match cap. Do not infer complete registration, consumer, or contract coverage from a partial batch.
 
 ## Ingest is not context loading
 
@@ -114,7 +114,7 @@ No scan artifacts are written into the target repository. No database or backgro
 
 ## Session lifecycle
 
-- A new inventory creates a new session. `inventory.truncated` means some files were not indexed; `summary_truncated` means only the returned summary was compacted (the complete saved manifest may still be available).
+- A new inventory creates a new session. `inventory.truncated` means some files were not indexed, and `inventory_complete=false` also covers directory/file scan errors. `summary_truncated` means the model-facing summary was compacted. Nested repositories and junction/reparse directories are excluded by default.
 - The helper finds the latest prior session for the same canonical repository path.
 - Prior evidence is copied only if every cited source still exists and its SHA-256 fingerprint matches.
 - Missing or changed source files invalidate the corresponding evidence record. Cached count jobs store content fingerprints for scanned files; a modified source invalidates the job, while added/removed in-scope files require a new inventory/session.
