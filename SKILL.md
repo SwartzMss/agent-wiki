@@ -104,14 +104,14 @@ Resolve the path and confirm that it is the intended repository root before scan
 
 “Ingest” means extracting a small set of evidence-bearing facts into an external session. It does not mean loading all repository files into model context.
 
-Use the helper at scripts/agent_wiki.py for deterministic inventory, bounded search/read/count, evidence persistence, and checkpoints. It uses Python's standard library only. Do not use AST, a code graph, subagents, IDE-specific APIs, an external database, or a service.
+Use the helper bundled with this Skill for deterministic inventory, bounded search/read/count, evidence persistence, and checkpoints. **Resolve `<skill-root>` as the actual directory containing this SKILL.md and invoke `<skill-root>/scripts/agent_wiki.py` using that path; do not assume the target repository contains the helper or that the terminal's current directory is the Skill installation directory.** It uses Python's standard library only. Do not use AST, a code graph, subagents, IDE-specific APIs, an external database, or a service.
 
 ### Phase A — Preflight and metadata-only inventory
 
 Run inventory once:
 
 ~~~bash
-python scripts/agent_wiki.py inventory --repo <repository-path>
+python "<skill-root>/scripts/agent_wiki.py" inventory --repo <repository-path>
 ~~~
 
 The command creates a session and stores a source manifest outside the target repository. It returns only a compact inventory summary, candidate authoritative files, exclusions, and a session ID.
@@ -161,9 +161,9 @@ Follow this source-reading order unless evidence suggests otherwise:
 Use bounded helper operations:
 
 ~~~bash
-python scripts/agent_wiki.py search --repo <repo> --session <id> --pattern "<symbol-or-contract>"
-python scripts/agent_wiki.py read --repo <repo> --session <id> --path <relative-path> --start-line <n> --end-line <n>
-python scripts/agent_wiki.py count --repo <repo> --session <id> --pattern "<contract-symbol-or-registration-key>"
+python "<skill-root>/scripts/agent_wiki.py" search --repo <repo> --session <id> --pattern "<symbol-or-contract>"
+python "<skill-root>/scripts/agent_wiki.py" read --repo <repo> --session <id> --path <relative-path> --start-line <n> --end-line <n>
+python "<skill-root>/scripts/agent_wiki.py" count --repo <repo> --session <id> --pattern "<contract-symbol-or-registration-key>"
 ~~~
 
 Default limits are defined in references/SCAN_POLICY.md. Do not raise them merely to avoid planning. Narrow the path, symbol, module, or line range first.
@@ -181,7 +181,7 @@ For large repositories, split inspection into logical units such as runtime entr
 For each material claim, store a compact evidence record outside the target repository:
 
 ~~~bash
-python scripts/agent_wiki.py evidence add --repo <repo> --session <id> --claim "<claim>" --classification verified_fact --path <relative-path> --symbol <symbol>
+python "<skill-root>/scripts/agent_wiki.py" evidence add --repo <repo> --session <id> --claim "<claim>" --classification verified_fact --path <relative-path> --symbol <symbol>
 ~~~
 
 Evidence records store claims, source paths, line/symbol locators, and source fingerprints. They do not store full source files or large snippets.
@@ -193,14 +193,14 @@ Use references/EVIDENCE_POLICY.md to classify claims. A source path without a sp
 After each logical unit, save the phase, completed task, and next task:
 
 ~~~bash
-python scripts/agent_wiki.py checkpoint --repo <repo> --session <id> --phase evidence --completed-task "runtime-map" --next-task "public-interface-boundaries"
+python "<skill-root>/scripts/agent_wiki.py" checkpoint --repo <repo> --session <id> --phase evidence --completed-task "runtime-map" --next-task "public-interface-boundaries"
 ~~~
 
 If context is compacted, the session is interrupted, or the scan must continue later:
 
 ~~~bash
-python scripts/agent_wiki.py resume --repo <repo> --session <id>
-python scripts/agent_wiki.py context-pack --repo <repo> --session <id>
+python "<skill-root>/scripts/agent_wiki.py" resume --repo <repo> --session <id>
+python "<skill-root>/scripts/agent_wiki.py" context-pack --repo <repo> --session <id>
 ~~~
 
 Resume from the recorded next task. Do not repeat completed work unless its source fingerprint is stale or the current task requires a different question.
