@@ -77,7 +77,7 @@ PHASES = {
     "validation", "approval", "done",
 }
 CLASSIFICATIONS = {
-    "verified_fact", "verified_convention", "historical_fact",
+    "verified_fact", "verified_constraint", "historical_fact",
     "potential_discrepancy", "unverified_hypothesis",
 }
 DEFAULT_BUDGETS = {
