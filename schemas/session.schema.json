@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SwartzMss/agent-wiki/blob/main/schemas/session.schema.json",
+  "title": "Agent Wiki Session",
+  "description": "Resumable scan state and bounded-operation accounting. Stored outside the target repository.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "repository",
+    "created_at",
+    "updated_at",
+    "status",
+    "phase",
+    "checkpoint",
+    "budgets",
+    "manifest_file",
+    "evidence_file",
+    "count_jobs",
+    "reuse",
+    "usage"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{12}$"
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "key",
+        "head",
+        "branch",
+        "dirty"
+      ],
+      "properties": {
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{16}$"
+        },
+        "head": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dirty": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "completed",
+        "needs_approval"
+      ]
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "preflight",
+        "inventory",
+        "plan",
+        "evidence",
+        "composition",
+        "validation",
+        "approval",
+        "done"
+      ]
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "completed_tasks",
+        "next_task"
+      ],
+      "properties": {
+        "completed_tasks": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "next_task": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inventory_output_bytes",
+        "read_output_bytes",
+        "search_output_bytes",
+        "search_max_matches",
+        "search_max_files",
+        "search_max_bytes",
+        "snippets_per_task",
+        "context_pack_bytes",
+        "count_max_files",
+        "count_max_bytes",
+        "count_max_file_bytes",
+        "session_helper_output_bytes"
+      ],
+      "properties": {
+        "inventory_output_bytes": {
+          "type": "integer"
+        },
+        "read_output_bytes": {
+          "type": "integer"
+        },
+        "search_output_bytes": {
+          "type": "integer"
+        },
+        "search_max_matches": {
+          "type": "integer"
+        },
+        "search_max_files": {
+          "type": "integer"
+        },
+        "search_max_bytes": {
+          "type": "integer"
+        },
+        "snippets_per_task": {
+          "type": "integer"
+        },
+        "context_pack_bytes": {
+          "type": "integer"
+        },
+        "count_max_files": {
+          "type": "integer"
+        },
+        "count_max_bytes": {
+          "type": "integer"
+        },
+        "count_max_file_bytes": {
+          "type": "integer"
+        },
+        "session_helper_output_bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "manifest_file": {
+      "type": "string"
+    },
+    "evidence_file": {
+      "type": "string"
+    },
+    "previous_session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "count_jobs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "reuse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reused",
+        "invalidated"
+      ],
+      "properties": {
+        "reused": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "invalidated": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "search_jobs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "helper_output_bytes"
+      ],
+      "properties": {
+        "helper_output_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
