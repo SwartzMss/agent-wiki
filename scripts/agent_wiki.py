@@ -665,6 +665,7 @@ def inventory_command(args: argparse.Namespace) -> dict[str, Any]:
         "evidence_file": str(evidence_path),
         "previous_session_id": previous_id,
         "count_jobs": {},
+        "search_jobs": {},
         "reuse": {"reused": reused, "invalidated": invalidated},
     }
     write_json(session_path, session)
@@ -724,6 +725,10 @@ def save_session(session_dir: Path, session: dict[str, Any]) -> None:
 def search_command(args: argparse.Namespace) -> None:
     root = Path(args.repo).expanduser().resolve(strict=True)
     session_dir, session, manifest = load_session(root, args.session, args.state_dir)
+    normalized_glob = normalize_relative_path(args.glob) if args.glob else None
+    entries = manifest_entries(manifest, normalized_glob)
+    if len(args.pattern) > 256:
+        raise ValueError("Search pattern exceeds the 256-character safety limit.")
     flags = 0 if args.case_sensitive else re.IGNORECASE
     expression = args.pattern if args.regex else re.escape(args.pattern)
     try:
@@ -731,11 +736,59 @@ def search_command(args: argparse.Namespace) -> None:
     except re.error as exc:
         raise ValueError(f"Invalid search expression: {exc}") from exc
 
-    entries = manifest_entries(manifest, args.glob)
-    offset = max(args.offset, 0)
-    line_offset = max(getattr(args, "line_offset", 0), 0)
-    if offset > len(entries) or (offset == len(entries) and line_offset):
-        raise ValueError("Search cursor is beyond the available file list.")
+    identity = json.dumps({
+        "pattern": args.pattern, "regex": args.regex,
+        "case_sensitive": args.case_sensitive, "glob": normalized_glob,
+        "before": args.before, "after": args.after,
+    }, sort_keys=True)
+    job_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+    jobs = session.setdefault("search_jobs", {})
+    existing = jobs.get(job_key)
+    restart = getattr(args, "restart", False)
+    if restart or existing is None:
+        existing = {
+            "pattern": redact_text(args.pattern), "glob": normalized_glob,
+            "next_offset": 0, "next_line_offset": 0,
+            "skipped_files": [], "skipped_count": 0,
+            "scanned_files": {}, "finished": False, "complete": False,
+        }
+        jobs[job_key] = existing
+
+    # Detect changes to already inspected files before continuing. A changed
+    # file invalidates saved offsets because line numbers may have shifted.
+    if not restart:
+        for rel, stamp in existing["scanned_files"].items():
+            try:
+                st = safe_file(root, rel).stat()
+                if st.st_size != stamp["size"] or st.st_mtime_ns != stamp["mtime_ns"]:
+                    raise ValueError("changed")
+            except (OSError, ValueError):
+                raise ValueError(
+                    "Search source changed since checkpoint. Rerun inventory if the "
+                    "file scope changed, otherwise rerun search with --restart."
+                )
+
+    # Recheck file membership for an existing cursor. For large inventories
+    # we do not silently claim completeness when the manifest is truncated.
+    if existing["finished"] and not restart:
+        emit({
+            "job_id": job_key, "pattern": existing["pattern"],
+            "glob": normalized_glob, "complete": existing["complete"],
+            "finished": True, "match_lines_found": 0,
+            "next_offset": existing["next_offset"],
+            "next_line_offset": existing["next_line_offset"],
+            "skipped_files": existing["skipped_files"][:20],
+            "skipped_count": existing["skipped_count"],
+            "snippets": [], "resumed": True,
+        }, MAX_SEARCH_OUTPUT)
+        return
+
+    explicit_offset = getattr(args, "offset", None)
+    explicit_line = getattr(args, "line_offset", None)
+    index = existing["next_offset"] if explicit_offset is None else explicit_offset
+    line_offset = existing["next_line_offset"] if explicit_line is None else explicit_line
+    if index < 0 or line_offset < 0 or index > len(entries) or (index == len(entries) and line_offset):
+        raise ValueError("Search cursor is outside the indexed file scope.")
     max_files = min(max(args.max_files, 1), MAX_SEARCH_FILES)
     max_matches = min(max(args.max_matches, 1), MAX_SEARCH_MATCHES)
     max_bytes = min(max(args.max_bytes, 1), MAX_SEARCH_BYTES)
@@ -746,108 +799,144 @@ def search_command(args: argparse.Namespace) -> None:
     scanned_files = 0
     scanned_bytes = 0
     match_lines = 0
-    skipped_large: list[str] = []
-    index = offset
-    next_line_offset = line_offset
     stopped_for_match_limit = False
-    budget_stopped = False
+    stopped_for_budget = False
+    next_line_offset = line_offset
+    batch_skipped: list[str] = []
 
     while index < len(entries) and scanned_files < max_files:
         entry = entries[index]
-        if entry["size"] > MAX_SEARCH_FILE_BYTES or entry["size"] > max_bytes:
-            skipped_large.append(entry["path"])
+        rel = entry["path"]
+        if entry["size"] > MAX_SEARCH_FILE_BYTES:
+            batch_skipped.append(rel)
             scanned_files += 1
             index += 1
             next_line_offset = 0
             continue
-        if scanned_bytes + entry["size"] > max_bytes:
-            budget_stopped = True
-            break
+
         try:
-            path = safe_file(root, entry["path"])
-            if path.stat().st_size > min(MAX_SEARCH_FILE_BYTES, max_bytes - scanned_bytes):
-                if scanned_bytes:
-                    budget_stopped = True
-                    break
-                skipped_large.append(entry["path"])
+            path = safe_file(root, rel)
+            st = path.stat()
+            if st.st_size > MAX_SEARCH_FILE_BYTES:
+                batch_skipped.append(rel)
                 scanned_files += 1
                 index += 1
                 next_line_offset = 0
                 continue
+            line_number = 0
+            previous: collections.deque[dict[str, Any]] = collections.deque(maxlen=2)
+            file_stopped = False
+            file_skipped = False
             with path.open("rb") as handle:
-                raw = handle.read(min(MAX_SEARCH_FILE_BYTES, max_bytes - scanned_bytes) + 1)
-            if len(raw) > min(MAX_SEARCH_FILE_BYTES, max_bytes - scanned_bytes):
-                budget_stopped = True
+                while True:
+                    raw_line = handle.readline(MAX_SOURCE_LINE_BYTES + 1)
+                    if not raw_line:
+                        break
+                    if len(raw_line) > MAX_SOURCE_LINE_BYTES and not raw_line.endswith(b"\n"):
+                        file_skipped = True
+                        break
+                    if scanned_bytes + len(raw_line) > max_bytes:
+                        # A single line larger than the batch budget cannot
+                        # make progress; report the file as skipped.
+                        if scanned_bytes == 0:
+                            file_skipped = True
+                        else:
+                            stopped_for_budget = True
+                            file_stopped = True
+                        break
+                    scanned_bytes += len(raw_line)
+                    line_number += 1
+                    if line_number <= next_line_offset:
+                        previous.append({
+                            "line": line_number,
+                            "text": redact_text(raw_line.decode("utf-8", "replace")[:MAX_LINE_CHARS]),
+                        })
+                        continue
+                    if b"\0" in raw_line[:4096]:
+                        file_skipped = True
+                        break
+                    line = raw_line.decode("utf-8", "replace")
+                    short = redact_text(line[:MAX_LINE_CHARS])
+                    if matcher.search(line):
+                        match_lines += 1
+                        if len(snippets) < MAX_SNIPPETS:
+                            count_on_line = sum(1 for _ in matcher.finditer(line))
+                            context = list(previous)[-before:] if before else []
+                            context.append({"line": line_number, "text": short})
+                            if after:
+                                saved = handle.tell()
+                                for j in range(after):
+                                    after_raw = handle.readline(MAX_SOURCE_LINE_BYTES + 1)
+                                    if not after_raw:
+                                        break
+                                    if len(after_raw) > MAX_SOURCE_LINE_BYTES and not after_raw.endswith(b"\n"):
+                                        break
+                                    context.append({
+                                        "line": line_number + j + 1,
+                                        "text": redact_text(after_raw.decode("utf-8", "replace")[:MAX_LINE_CHARS]),
+                                    })
+                                handle.seek(saved)
+                            snippets.append({
+                                "path": rel, "line": line_number,
+                                "matches_on_line": count_on_line,
+                                "context": context,
+                            })
+                        if match_lines >= max_matches:
+                            stopped_for_match_limit = True
+                            file_stopped = True
+                            next_line_offset = line_number
+                            break
+                    previous.append({"line": line_number, "text": short})
+            scanned_files += 1
+            existing["scanned_files"][rel] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
+            if file_skipped:
+                batch_skipped.append(rel)
+                index += 1
+                next_line_offset = 0
+                continue
+            if file_stopped:
+                if stopped_for_budget:
+                    next_line_offset = line_number - 1
+                # End-of-file after a match cap is handled on next resume.
                 break
-        except (OSError, ValueError):
-            skipped_large.append(entry["path"])
+            index += 1
+            next_line_offset = 0
+        except OSError:
+            batch_skipped.append(rel)
             scanned_files += 1
             index += 1
             next_line_offset = 0
-            continue
-        scanned_files += 1
-        scanned_bytes += len(raw)
-        if b"\0" in raw[:4096]:
-            skipped_large.append(entry["path"])
-            index += 1
-            next_line_offset = 0
-            continue
-        lines = raw.decode("utf-8", errors="replace").splitlines()
-        for line_index in range(next_line_offset, len(lines)):
-            line = lines[line_index]
-            found = list(matcher.finditer(line))
-            if not found:
-                continue
-            match_lines += 1
-            if len(snippets) < MAX_SNIPPETS:
-                start = max(0, line_index - before)
-                end = min(len(lines), line_index + after + 1)
-                snippets.append({
-                    "path": entry["path"],
-                    "line": line_index + 1,
-                    "matches_on_line": len(found),
-                    "context": [
-                        {"line": i + 1, "text": redact_text(lines[i][:MAX_LINE_CHARS])}
-                        for i in range(start, end)
-                    ],
-                })
-            if match_lines >= max_matches:
-                stopped_for_match_limit = True
-                next_line_offset = line_index + 1
-                if next_line_offset >= len(lines):
-                    index += 1
-                    next_line_offset = 0
-                break
-        if stopped_for_match_limit:
-            break
-        index += 1
-        next_line_offset = 0
 
-    complete = (
-        index >= len(entries)
-        and not skipped_large
-        and not manifest["inventory"]["truncated"]
-        and not stopped_for_match_limit
+    skipped = existing["skipped_files"]
+    for rel in batch_skipped:
+        existing["skipped_count"] += 1
+        if len(skipped) < 20:
+            skipped.append(rel)
+    existing["next_offset"] = index
+    existing["next_line_offset"] = next_line_offset
+    existing["finished"] = index >= len(entries)
+    existing["complete"] = (
+        existing["finished"]
+        and not existing["skipped_count"]
+        and manifest["inventory"].get("inventory_complete", False)
     )
+    save_session(session_dir, session)
     result = {
-        "pattern": redact_text(args.pattern),
-        "glob": normalize_relative_path(args.glob) if args.glob else None,
-        "files_scanned": scanned_files,
-        "bytes_scanned": scanned_bytes,
-        "match_lines_found": match_lines,
-        "snippets": snippets,
-        "complete": complete,
-        "next_offset": index,
+        "job_id": job_key, "pattern": redact_text(args.pattern),
+        "glob": normalized_glob, "files_scanned": scanned_files,
+        "bytes_scanned": scanned_bytes, "match_lines_found": match_lines,
+        "snippets": snippets, "complete": existing["complete"],
+        "finished": existing["finished"], "next_offset": index,
         "next_line_offset": next_line_offset,
         "cursor": {"file_offset": index, "line_offset": next_line_offset},
         "remaining_files": max(0, len(entries) - index),
-        "skipped_files": skipped_large[:20],
-        "stopped_on_budget": budget_stopped,
+        "skipped_files": skipped[:20], "skipped_count": existing["skipped_count"],
+        "stopped_on_budget": stopped_for_budget,
+        "resumed": index != 0 or line_offset != 0,
     }
     while len(json_text(result).encode("utf-8")) > MAX_SEARCH_OUTPUT and result["snippets"]:
         result["snippets"].pop()
     emit(result, MAX_SEARCH_OUTPUT)
-    save_session(session_dir, session)
 
 
 def read_command(args: argparse.Namespace) -> None:
@@ -1172,6 +1261,16 @@ def resume_command(args: argparse.Namespace) -> None:
         },
         "evidence_records": evidence_count,
         "reuse": session["reuse"],
+        "search_jobs": {
+            key: {
+                "finished": value["finished"],
+                "complete": value["complete"],
+                "next_offset": value["next_offset"],
+                "next_line_offset": value["next_line_offset"],
+                "skipped_count": value["skipped_count"],
+            }
+            for key, value in session.get("search_jobs", {}).items()
+        },
         "count_jobs": {
             key: {
                 "pattern": value["pattern"],
@@ -1254,8 +1353,9 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--glob", help="Optional repository-relative file glob.")
     search.add_argument("--regex", action="store_true", help="Treat pattern as a regular expression.")
     search.add_argument("--case-sensitive", action="store_true")
-    search.add_argument("--offset", type=int, default=0, help="0-based file index in the matching manifest.")
-    search.add_argument("--line-offset", type=int, default=0, help="0-based line index within the current file; pair with --offset.")
+    search.add_argument("--offset", type=int, help="Override the saved file cursor.")
+    search.add_argument("--line-offset", type=int, help="Override the saved line cursor.")
+    search.add_argument("--restart", action="store_true", help="Restart this search job.")
     search.add_argument("--max-files", type=int, default=MAX_SEARCH_FILES)
     search.add_argument("--max-matches", type=int, default=MAX_SEARCH_MATCHES)
     search.add_argument("--max-bytes", type=int, default=MAX_SEARCH_BYTES)
