@@ -84,6 +84,16 @@ python scripts/agent_wiki.py search --repo /path/to/repository --session SESSION
 
 `count` 保存 SHA-256、大小及修改时间：元数据未变时省去重复 Hash，发生变化时再验证内容。每批只核对文件名范围，不重新生成完整 Inventory。新增/删除适用范围内的文件仍须重新 `inventory`；跳过文件恢复后可用 `count --retry-skipped`，或通过 `--restart` 重算全部。缓存结果不会向模型输出大量文件指纹。
 
+### Session 缓存清理
+
+Session/Evidence 默认保存在目标仓库之外，不会自动删除正在进行的扫描。若要整理历史缓存，使用只读预览：
+
+~~~bash
+python scripts/agent_wiki.py prune --repo /path/to/repository --older-than-days 30
+~~~
+
+确认预览结果后，再显式添加 `--apply` 执行清理。默认保留 `active` Session；只有明确添加 `--include-active` 才会将超过期限的活跃 Session 纳入候选。清理命令不会修改目标仓库源码。
+
 ### Windows / Linux 兼容
 
 - 支持 Windows 和 Linux，不要求 WSL。
